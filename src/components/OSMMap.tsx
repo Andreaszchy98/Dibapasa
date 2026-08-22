@@ -143,7 +143,7 @@ export const OSMMap: React.FC<OSMMapProps> = ({
           draggable: isDraggable,
         }).addTo(map);
 
-        marker.on('dragend', (e: any) => {
+        marker.on('dragend', (e: L.DragEndEvent) => {
           const newPos = e.target.getLatLng();
           if (onMarkerDragEnd) {
             onMarkerDragEnd({ lat: newPos.lat, lng: newPos.lng });

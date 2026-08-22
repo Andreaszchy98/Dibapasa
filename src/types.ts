@@ -1,3 +1,20 @@
+import { Timestamp } from 'firebase/firestore';
+
+export type FirestoreTimestamp = any;
+
+export type ToastType = 'success' | 'error' | 'info' | 'warning';
+
+export type UserRole = 
+  | 'client' 
+  | 'company' 
+  | 'admin' 
+  | 'dispatcher' 
+  | 'preparer' 
+  | 'driver' 
+  | 'loader' 
+  | 'store_sales' 
+  | 'inventory';
+
 export interface Category {
   id: string;
   name: string;
@@ -34,7 +51,7 @@ export interface InventoryRequest {
   status: 'pending' | 'approved' | 'rejected';
   requestedBy: string;
   requestedByName: string;
-  createdAt: any;
+  createdAt: FirestoreTimestamp;
 }
 
 export interface AppNotification {
@@ -44,7 +61,7 @@ export interface AppNotification {
   message: string;
   type: 'order' | 'inventory' | 'system';
   read: boolean;
-  createdAt: any;
+  createdAt: FirestoreTimestamp;
 }
 
 export interface UserProfile {
@@ -52,8 +69,8 @@ export interface UserProfile {
   name: string;
   email: string;
   phone?: string;
-  role: 'client' | 'company' | 'admin' | 'dispatcher' | 'preparer' | 'driver' | 'loader' | 'store_sales' | 'inventory';
-  viewAs?: 'client' | 'company' | 'admin' | 'dispatcher' | 'preparer' | 'driver' | 'loader' | 'store_sales' | 'inventory';
+  role: UserRole;
+  viewAs?: UserRole;
 }
 
 export interface OrderItem {
@@ -76,8 +93,8 @@ export interface Order {
   items: OrderItem[];
   total: number;
   status: 'pending' | 'accepted' | 'processing' | 'ready' | 'shipped' | 'delivered' | 'cancelled' | 'completed';
-  createdAt: any; // Firestore Timestamp
-  updatedAt?: any;
+  createdAt: FirestoreTimestamp;
+  updatedAt?: FirestoreTimestamp;
   address: string;
   location?: {
     lat: number;
@@ -106,13 +123,14 @@ export interface Order {
   hasReturns?: boolean;
   returnedItems?: OrderItem[];
   isExchange?: boolean;
-  arrivedAt?: any;
-  reviewedAt?: any;
-  dispatchedAt?: any;
-  preparedAt?: any;
-  deliveredAt?: any;
-  paidAt?: any;
+  arrivedAt?: FirestoreTimestamp;
+  reviewedAt?: FirestoreTimestamp;
+  dispatchedAt?: FirestoreTimestamp;
+  preparedAt?: FirestoreTimestamp;
+  deliveredAt?: FirestoreTimestamp;
+  paidAt?: FirestoreTimestamp;
   weightValidated?: boolean;
+  notes?: string;
 }
 
 export interface DeliveryRoute {
@@ -123,8 +141,8 @@ export interface DeliveryRoute {
   status: 'active' | 'in_progress' | 'completed' | 'cancelled';
   orderIds: string[];
   releasedToPrep?: boolean;
-  createdAt: any;
-  updatedAt: any;
+  createdAt: FirestoreTimestamp;
+  updatedAt: FirestoreTimestamp;
 }
 
 export interface AppSettings {
@@ -135,24 +153,65 @@ export interface AppSettings {
   shopLng?: number;
 }
 
+export interface ReturnItem {
+  productId: string;
+  name: string;
+  quantity: number;
+  price: number;
+  unit?: 'Kg' | 'Paq' | 'Pza' | 'Fco' | 'Bolsa' | 'Caja';
+  approxWeight?: number;
+  reason: string;
+  photoUrl: string;
+}
+
 export interface Return {
   id: string;
   orderId: string;
   userId: string;
   userName: string;
-  items: Array<{
-    productId: string;
-    name: string;
-    quantity: number;
-    price: number;
-    reason: string;
-    photoUrl: string;
-  }>;
+  items: ReturnItem[];
   totalReduction: number;
   status: 'pending' | 'approved' | 'rejected';
   resolution: 'none' | 'waste' | 'stock';
-  createdAt: any;
-  processedAt?: any;
+  createdAt: FirestoreTimestamp;
+  processedAt?: FirestoreTimestamp;
 }
 
-export type Page = 'home' | 'cart' | 'current-order' | 'history' | 'profile' | 'checkout' | 'admin-dashboard' | 'admin-users' | 'admin-orders' | 'dispatcher-view' | 'dispatcher-history' | 'preparer-view' | 'preparer-history' | 'driver-view' | 'driver-history' | 'inventory-view' | 'admin-notifications' | 'admin-inventory-tracking' | 'admin-returns' | 'loader-view' | 'loader-history' | 'admin-settings' | 'product-detail' | 'admin-categories' | 'store-sales-view' | 'store-ticket';
+export interface ReturnSubmitPayload {
+  orderId: string;
+  userId?: string;
+  userName?: string;
+  items: ReturnItem[];
+  totalReduction: number;
+  status?: 'pending' | 'approved' | 'rejected';
+  resolution?: 'none' | 'waste' | 'stock';
+  createdAt?: FirestoreTimestamp;
+}
+
+export type Page = 
+  | 'home' 
+  | 'cart' 
+  | 'current-order' 
+  | 'history' 
+  | 'profile' 
+  | 'checkout' 
+  | 'admin-dashboard' 
+  | 'admin-users' 
+  | 'admin-orders' 
+  | 'dispatcher-view' 
+  | 'dispatcher-history' 
+  | 'preparer-view' 
+  | 'preparer-history' 
+  | 'driver-view' 
+  | 'driver-history' 
+  | 'inventory-view' 
+  | 'admin-notifications' 
+  | 'admin-inventory-tracking' 
+  | 'admin-returns' 
+  | 'loader-view' 
+  | 'loader-history' 
+  | 'admin-settings' 
+  | 'product-detail' 
+  | 'admin-categories' 
+  | 'store-sales-view' 
+  | 'store-ticket';

@@ -94,7 +94,8 @@ export const signInWithGoogle = async () => {
     provider.setCustomParameters({ prompt: 'select_account' });
     const result = await signInWithPopup(auth, provider);
     return result.user;
-  } catch (error: any) {
+  } catch (err: unknown) {
+    const error = err as { code?: string; message?: string };
     if (error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request') {
       // User closed the popup or superseded by another action
     } else if (error?.code === 'auth/missing-or-invalid-nonce' || error?.message?.includes('Duplicate credential')) {
@@ -102,7 +103,7 @@ export const signInWithGoogle = async () => {
     } else {
       console.error("Error signing in with Google:", error);
     }
-    throw error;
+    throw err;
   }
 };
 

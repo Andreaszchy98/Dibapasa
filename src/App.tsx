@@ -10,7 +10,6 @@ import html2canvas from 'html2canvas';
 import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { GoogleGenAI } from "@google/genai";
 import { OSMMap } from './components/OSMMap';
 import { searchOSMPlaces, reverseOSMGeocode, reverseOSMDetails, getOSRMRoute, OSMPlace, RouteResult, calculateStraightDistance } from './lib/osm';
 

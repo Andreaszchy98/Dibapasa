@@ -117,7 +117,7 @@ service cloud.firestore {
              (data.keys().size() >= 6 && data.keys().size() <= 15) &&
              data.productId is string &&
              data.type in ['update', 'waste', 'stock'] &&
-             data.newValue is int || data.newValue is number &&
+             (data.newValue is int || data.newValue is number) &&
              data.status in ['pending', 'approved', 'rejected'];
     }
 

@@ -54,7 +54,7 @@ export function ProfilePage({ profile, onUpdate, effectiveRole, setCurrentPage, 
     driver: 'Conductor',
     loader: 'Cargador',
     inventory: 'Inventarios',
-    store_sales: 'Ventas Tienda'
+    store_sales: 'Cajero'
   };
 
   return (

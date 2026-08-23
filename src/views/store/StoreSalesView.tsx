@@ -4,16 +4,18 @@ import { Plus, CreditCard, Package, Search, X, CheckCircle2, Loader2 } from 'luc
 import { doc, updateDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { Button, Input, cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order } from '../../types';
+import { Order, UserProfile } from '../../types';
 import { StoreTicketView } from './StoreTicketView';
 
 export function StoreSalesView({ 
   orders, 
+  profile,
   onBack: _onBack,
   onNewOrderClick,
   showToast
 }: { 
   orders: Order[]; 
+  profile: UserProfile;
   onBack: () => void; 
   onNewOrderClick: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
@@ -50,6 +52,8 @@ export function StoreSalesView({
       await updateDoc(doc(db, 'orders', order.id), { 
         paymentStatus: 'paid',
         paidAt: serverTimestamp(),
+        processedBy: profile.uid,
+        processedByName: profile.name,
         updatedAt: serverTimestamp()
       });
       
@@ -113,7 +117,10 @@ export function StoreSalesView({
     >
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-bold text-gray-900">Ventas en Tienda</h2>
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Caja / Ventas en Tienda</h2>
+            <p className="text-xs text-gray-500">Módulo de Cajero y Cobro de Pedidos</p>
+          </div>
           <Button 
             onClick={onNewOrderClick}
             className="bg-gray-900 hover:bg-black text-white h-10 px-4 rounded-xl flex items-center gap-2"

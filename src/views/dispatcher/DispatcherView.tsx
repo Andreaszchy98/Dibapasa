@@ -14,6 +14,7 @@ export function DispatcherView({
   routes,
   users, 
   products, 
+  profile,
   onBack: _onBack, 
   showToast,
   initialTab = 'pending'
@@ -22,6 +23,7 @@ export function DispatcherView({
   routes: DeliveryRoute[]; 
   users: UserProfile[]; 
   products: Product[]; 
+  profile: UserProfile;
   onBack: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
   initialTab?: 'pending' | 'history'; 
@@ -108,6 +110,8 @@ export function DispatcherView({
           ...newRouteData,
           status: 'active',
           orderIds: [],
+          assignedBy: profile.uid,
+          assignedByName: profile.name,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
@@ -174,7 +178,9 @@ export function DispatcherView({
       for (const order of routeOrders) {
         await updateDoc(doc(db, 'orders', order.id), {
           status: 'processing',
-          dispatchedAt: serverTimestamp()
+          dispatchedAt: serverTimestamp(),
+          dispatchedBy: profile.uid,
+          dispatchedByName: profile.name
         });
 
         for (const item of order.items) {
@@ -288,7 +294,9 @@ export function DispatcherView({
 
       await updateDoc(doc(db, 'orders', order.id), { 
         status: nextStatus,
-        dispatchedAt: serverTimestamp()
+        dispatchedAt: serverTimestamp(),
+        dispatchedBy: profile.uid,
+        dispatchedByName: profile.name
       });
       
       await addDoc(collection(db, 'notifications'), {
@@ -645,10 +653,14 @@ export function DispatcherView({
                         <div className="flex flex-col gap-1">
                           <p className="text-[10px] text-gray-600">Creado: {order.createdAt?.toDate ? order.createdAt.toDate().toLocaleString() : 'N/A'}</p>
                           {order.dispatchedAt && (
-                            <p className="text-[10px] text-blue-600 font-bold">Despachado: {order.dispatchedAt.toDate().toLocaleString()}</p>
+                            <p className="text-[10px] text-blue-600 font-bold">
+                              Despachado: {order.dispatchedAt.toDate().toLocaleString()}{order.dispatchedByName ? ` · ${order.dispatchedByName}` : ''}
+                            </p>
                           )}
                           {order.preparedAt && (
-                            <p className="text-[10px] text-green-600">Preparado: {order.preparedAt.toDate().toLocaleString()}</p>
+                            <p className="text-[10px] text-green-600">
+                              Preparado: {order.preparedAt.toDate().toLocaleString()}{order.preparedByName ? ` · ${order.preparedByName}` : ''}
+                            </p>
                           )}
                         </div>
                       </div>

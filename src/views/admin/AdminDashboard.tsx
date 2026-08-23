@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RotateCcw, ShieldCheck, ChevronRight, Calendar, Package, AlertTriangle, Tags, Settings, ClipboardList, Truck } from 'lucide-react';
+import { RotateCcw, ShieldCheck, ChevronRight, Calendar, Package, AlertTriangle, Tags, Settings, ClipboardList, Truck, Activity } from 'lucide-react';
 import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
 import { Order, UserProfile } from '../../types';
@@ -16,6 +16,7 @@ export function AdminDashboard({
   onInventoryTrackingClick,
   onReturnsClick,
   onDriverRouteClick,
+  onActivityClick,
   onSettingsClick,
   onCategoriesClick,
   onRefresh,
@@ -31,6 +32,7 @@ export function AdminDashboard({
   onInventoryTrackingClick: (p: 'day' | 'week' | 'month' | 'year') => void;
   onReturnsClick: () => void;
   onDriverRouteClick: () => void;
+  onActivityClick?: () => void;
   onSettingsClick: () => void;
   onProductsClick?: () => void;
   onCategoriesClick: () => void;
@@ -269,6 +271,24 @@ export function AdminDashboard({
           </div>
           <ChevronRight className="w-5 h-5 text-gray-300" />
         </button>
+
+        {onActivityClick && (
+          <button 
+            onClick={onActivityClick}
+            className="col-span-2 bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between hover:border-indigo-200 transition-colors"
+          >
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
+                <Activity className="w-6 h-6" />
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-bold text-gray-900">Auditoría y Actividad por Empleado</p>
+                <p className="text-[10px] text-gray-400">Rastreo de acciones por despachador, preparador, chofer y cargador</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-gray-300" />
+          </button>
+        )}
 
         <button 
           onClick={onSettingsClick}

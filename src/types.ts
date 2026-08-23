@@ -127,9 +127,18 @@ export interface Order {
   arrivedAt?: FirestoreTimestamp;
   reviewedAt?: FirestoreTimestamp;
   dispatchedAt?: FirestoreTimestamp;
+  dispatchedBy?: string;
+  dispatchedByName?: string;
   preparedAt?: FirestoreTimestamp;
+  preparedBy?: string;
+  preparedByName?: string;
+  loadedAt?: FirestoreTimestamp;
+  loadedBy?: string;
+  loadedByName?: string;
   deliveredAt?: FirestoreTimestamp;
   paidAt?: FirestoreTimestamp;
+  processedBy?: string;
+  processedByName?: string;
   weightValidated?: boolean;
   notes?: string;
 }
@@ -142,6 +151,8 @@ export interface DeliveryRoute {
   status: 'active' | 'in_progress' | 'completed' | 'cancelled';
   orderIds: string[];
   releasedToPrep?: boolean;
+  assignedBy?: string;
+  assignedByName?: string;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
 }
@@ -214,5 +225,6 @@ export type Page =
   | 'admin-settings' 
   | 'product-detail' 
   | 'admin-categories' 
+  | 'admin-activity' 
   | 'store-sales-view' 
   | 'store-ticket';

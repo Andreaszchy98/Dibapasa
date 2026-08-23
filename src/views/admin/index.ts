@@ -7,3 +7,4 @@ export * from './AdminInventoryTrackingView';
 export * from './AdminNotificationsView';
 export * from './AdminOrdersView';
 export * from './AdminReturnsView';
+export * from './AdminActivityView';

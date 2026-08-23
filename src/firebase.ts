@@ -26,13 +26,12 @@ export const googleProvider = new GoogleAuthProvider();
 
 async function testConnection() {
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    console.log("Firestore connection test successful");
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration. The client is offline.");
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return;
     }
-    // Skip logging for other errors, as this is simply a connection test.
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    // Normal when offline or during transient network changes - ignore test connection errors
   }
 }
 testConnection();
@@ -66,8 +65,15 @@ interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errMsg = error instanceof Error ? error.message : String(error);
+  // If the error is simply due to client offline or connection unavailable, log as warning without throwing
+  if (errMsg.includes('offline') || errMsg.includes('unavailable') || errMsg.includes('could not be completed')) {
+    console.warn(`Firestore [${operationType}] for path '${path}' pending connection:`, errMsg);
+    return;
+  }
+
   const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+    error: errMsg,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
@@ -85,7 +91,6 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     path
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
 }
 
 export const signInWithGoogle = async () => {

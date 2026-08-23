@@ -4,7 +4,7 @@ import { ClipboardList, Clock, Package, X, Check } from 'lucide-react';
 import { doc, updateDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { Button, cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order, DeliveryRoute, Product } from '../../types';
+import { Order, DeliveryRoute, Product, UserProfile } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
 import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
 import { calculateOrderPricing } from '../../lib/orders';
@@ -13,6 +13,7 @@ export function PreparerView({
   orders, 
   routes,
   products, 
+  profile,
   onBack: _onBack, 
   showToast,
   initialTab = 'pending'
@@ -20,6 +21,7 @@ export function PreparerView({
   orders: Order[]; 
   routes: DeliveryRoute[]; 
   products: Product[]; 
+  profile: UserProfile;
   onBack: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
   initialTab?: 'pending' | 'history'; 
@@ -60,6 +62,8 @@ export function PreparerView({
       await updateDoc(doc(db, 'orders', order.id), { 
         status: 'ready',
         preparedAt: serverTimestamp(),
+        preparedBy: profile.uid,
+        preparedByName: profile.name,
         items: updatedItems,
         adjustedTotal: newTotal,
         weightValidated: true
@@ -153,7 +157,9 @@ export function PreparerView({
                             {order.status === 'processing' ? 'En Preparación' : 'Listo'}
                           </span>
                           {order.preparedAt && initialTab === 'history' && (
-                            <span className="text-[8px] text-gray-400">Preparado: {order.preparedAt.toDate().toLocaleTimeString()}</span>
+                            <span className="text-[8px] text-gray-400">
+                              Preparado: {order.preparedAt.toDate().toLocaleTimeString()}{order.preparedByName ? ` · ${order.preparedByName}` : ''}
+                            </span>
                           )}
                         </div>
                       </div>
@@ -220,7 +226,10 @@ export function PreparerView({
                     {selectedOrder.preparedAt && (
                       <div>
                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Preparado</p>
-                        <p className="text-sm text-blue-600 font-bold">{selectedOrder.preparedAt.toDate().toLocaleString()}</p>
+                        <p className="text-sm text-blue-600 font-bold">
+                          {selectedOrder.preparedAt.toDate().toLocaleString()}
+                          {selectedOrder.preparedByName && <span className="text-gray-600 font-normal"> · por {selectedOrder.preparedByName}</span>}
+                        </p>
                       </div>
                     )}
                   </div>

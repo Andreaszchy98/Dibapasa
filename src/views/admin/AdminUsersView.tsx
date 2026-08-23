@@ -7,6 +7,18 @@ import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
 import { UserProfile } from '../../types';
 
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'Administrador',
+  client: 'Cliente',
+  company: 'Empresa',
+  dispatcher: 'Despachador',
+  preparer: 'Preparador',
+  driver: 'Conductor',
+  loader: 'Cargador',
+  store_sales: 'Cajero',
+  inventory: 'Inventarios'
+};
+
 export function AdminUsersView({ users, onBack, onRefresh }: { users: UserProfile[]; onBack: () => void; onRefresh?: () => void }) {
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
 
@@ -54,10 +66,12 @@ export function AdminUsersView({ users, onBack, onRefresh }: { users: UserProfil
                     u.role === 'dispatcher' ? "bg-orange-100 text-orange-700" :
                     u.role === 'preparer' ? "bg-blue-100 text-blue-700" :
                     u.role === 'driver' ? "bg-green-100 text-green-700" :
+                    u.role === 'loader' ? "bg-amber-100 text-amber-700" :
+                    u.role === 'store_sales' ? "bg-emerald-100 text-emerald-700" :
                     u.role === 'company' ? "bg-blue-50 text-blue-600" :
                     "bg-gray-100 text-gray-600"
                   )}>
-                    {u.role}
+                    {ROLE_LABELS[u.role] || u.role}
                   </span>
                 </div>
               </div>
@@ -109,7 +123,7 @@ export function AdminUsersView({ users, onBack, onRefresh }: { users: UserProfil
                           selectedUser.role === r ? "border-[#0056b3] bg-blue-50 text-[#0056b3]" : "border-gray-100 text-gray-500 hover:border-gray-200"
                         )}
                       >
-                        {r.charAt(0).toUpperCase() + r.slice(1)}
+                        {ROLE_LABELS[r] || r}
                       </button>
                     ))}
                   </div>

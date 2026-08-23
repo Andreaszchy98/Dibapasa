@@ -14,6 +14,7 @@ export function LoaderView({
   routes,
   users, 
   products, 
+  profile,
   onBack: _onBack, 
   showToast,
   initialTab = 'pending'
@@ -22,6 +23,7 @@ export function LoaderView({
   routes: DeliveryRoute[]; 
   users: UserProfile[]; 
   products: Product[]; 
+  profile: UserProfile;
   onBack: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
   initialTab?: 'pending' | 'history'; 
@@ -107,7 +109,10 @@ export function LoaderView({
     try {
       const updateData: Partial<Order> = { 
         status: 'shipped', 
-        onboarded: true 
+        onboarded: true,
+        loadedAt: serverTimestamp(),
+        loadedBy: profile.uid,
+        loadedByName: profile.name
       };
 
       if (hasKgItems) {
@@ -200,9 +205,14 @@ export function LoaderView({
                          order.status === 'ready' ? 'Listo p/ Carga' : order.status}
                       </span>
                       {order.onboarded && (
-                        <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold uppercase">
-                          Cargado
-                        </span>
+                        <div className="flex flex-col items-end">
+                          <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold uppercase">
+                            Cargado
+                          </span>
+                          {order.loadedByName && (
+                            <span className="text-[8px] text-gray-400">por {order.loadedByName}</span>
+                          )}
+                        </div>
                       )}
                     </div>
                     {initialTab === 'pending' ? (
@@ -286,7 +296,14 @@ export function LoaderView({
                     <p className="text-[10px] text-blue-600 font-bold uppercase mb-1">Estado General</p>
                     <div className="flex justify-between items-center">
                       <span className="font-black text-lg text-gray-900 uppercase">{selectedOrder.status}</span>
-                      {selectedOrder.onboarded && <span className="bg-green-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">CARGADO</span>}
+                      {selectedOrder.onboarded && (
+                        <div className="flex flex-col items-end">
+                          <span className="bg-green-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold">CARGADO</span>
+                          {selectedOrder.loadedByName && (
+                            <span className="text-[9px] text-gray-500 mt-0.5">por {selectedOrder.loadedByName}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 

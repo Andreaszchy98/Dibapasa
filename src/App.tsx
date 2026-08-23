@@ -27,7 +27,8 @@ import {
   AdminInventoryTrackingView,
   AdminNotificationsView,
   AdminOrdersView,
-  AdminReturnsView
+  AdminReturnsView,
+  AdminActivityView
 } from './views/admin';
 import { DriverView } from './views/driver/DriverView';
 import { DispatcherView } from './views/dispatcher/DispatcherView';
@@ -141,11 +142,15 @@ export default function App() {
 
     // Initial server check
     const checkActualConnection = async () => {
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        setIsOnline(false);
+        return;
+      }
       try {
         await getDocFromServer(doc(db, '_health', 'check'));
       } catch (error: unknown) {
-        const err = error as { message?: string };
-        if (err.message?.includes('offline')) {
+        const err = error as { message?: string; code?: string };
+        if (err.message?.includes('offline') || err.code === 'unavailable') {
           setIsOnline(false);
         }
       }
@@ -249,6 +254,7 @@ export default function App() {
     } finally {
       setUser(null);
       setProfile(null);
+      setShowRoleSelection(false);
       setGuestMode(false);
       setAuthMode('options');
       setEmail('');
@@ -256,19 +262,72 @@ export default function App() {
       setRegName('');
       setCurrentPage('home');
       localStorage.removeItem('currentPage');
+      localStorage.removeItem('viewAs');
       showToast('Sesión cerrada correctamente', 'info');
     }
   };
 
+  const loadUserProfile = async (u: User) => {
+    try {
+      const docRef = doc(db, 'users', u.uid);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data() as UserProfile;
+        const savedViewAs = data.role === 'admin' ? (localStorage.getItem('viewAs') as any) : undefined;
+        setProfile({ ...data, viewAs: savedViewAs || data.viewAs || (data.role === 'admin' ? 'admin' : undefined) });
+        setShowRoleSelection(false);
+        if (data.role === 'admin') {
+          if (savedViewAs === 'client' || savedViewAs === 'company') setCurrentPage('home');
+          else if (savedViewAs === 'dispatcher') setCurrentPage('dispatcher-view');
+          else if (savedViewAs === 'preparer') setCurrentPage('preparer-view');
+          else if (savedViewAs === 'driver') setCurrentPage('driver-view');
+          else if (savedViewAs === 'loader') setCurrentPage('loader-view');
+          else if (savedViewAs === 'store_sales') setCurrentPage('store-sales-view');
+          else if (savedViewAs === 'inventory') setCurrentPage('admin-inventory-tracking');
+          else setCurrentPage('admin-dashboard');
+        }
+        else if (data.role === 'dispatcher') setCurrentPage('dispatcher-view');
+        else if (data.role === 'preparer') setCurrentPage('preparer-view');
+        else if (data.role === 'driver') setCurrentPage('driver-view');
+        else if (data.role === 'loader') setCurrentPage('loader-view');
+        else if (data.role === 'store_sales') setCurrentPage('store-sales-view');
+        else if (data.role === 'inventory') setCurrentPage('admin-inventory-tracking');
+        else setCurrentPage('home');
+      } else {
+        // New user without profile document
+        setShowRoleSelection(true);
+      }
+    } catch (err) {
+      console.error("Error retrieving user profile:", err);
+      const fallbackProfile: UserProfile = {
+        uid: u.uid,
+        name: u.displayName || u.email?.split('@')[0] || 'Usuario',
+        email: u.email || '',
+        role: 'client'
+      };
+      setProfile(fallbackProfile);
+      setShowRoleSelection(false);
+      setCurrentPage('home');
+    }
+  };
+
   const handleGoogleSignIn = async () => {
+    if (!isOnline) {
+      showToast('No puedes iniciar sesión sin conexión a internet', 'error');
+      return;
+    }
     if (isAuthLoading) return;
     setIsAuthLoading(true);
     try {
-      await signInWithGoogle();
+      const loggedUser = await signInWithGoogle();
+      if (loggedUser) {
+        setUser(loggedUser);
+        await loadUserProfile(loggedUser);
+      }
     } catch (error: unknown) {
       const err = error as { code?: string; message?: string };
       if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-        // User voluntarily closed popup
+        showToast('No se completó el inicio con Google. Si no cerraste la ventana tú, puede ser tu conexión — intenta de nuevo o usa correo y contraseña.', 'info');
       } else if (err.code === 'auth/missing-or-invalid-nonce' || err.message?.includes('nonce') || err.message?.includes('Duplicate credential')) {
         showToast('Para iniciar con Google, usa el botón de correo o abre la app en pestaña nueva.', 'info');
       } else {
@@ -360,36 +419,7 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       if (u) {
-        try {
-          const docRef = doc(db, 'users', u.uid);
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-            const data = docSnap.data() as UserProfile;
-            const savedViewAs = localStorage.getItem('viewAs') as any;
-            setProfile({ ...data, viewAs: savedViewAs || data.viewAs || 'admin' });
-            if (data.role === 'admin') setCurrentPage('admin-dashboard');
-            else if (data.role === 'dispatcher') setCurrentPage('dispatcher-view');
-            else if (data.role === 'preparer') setCurrentPage('preparer-view');
-            else if (data.role === 'driver') setCurrentPage('driver-view');
-            else if (data.role === 'loader') setCurrentPage('loader-view');
-            else if (data.role === 'store_sales') setCurrentPage('store-sales-view');
-            else if (data.role === 'inventory') setCurrentPage('admin-inventory-tracking');
-            else setCurrentPage('home');
-          } else {
-            // New user without profile document
-            setShowRoleSelection(true);
-          }
-        } catch (err) {
-          console.error("Error retrieving user profile:", err);
-          const fallbackProfile: UserProfile = {
-            uid: u.uid,
-            name: u.displayName || u.email?.split('@')[0] || 'Usuario',
-            email: u.email || '',
-            role: 'client'
-          };
-          setProfile(fallbackProfile);
-          setCurrentPage('home');
-        }
+        await loadUserProfile(u);
       } else {
         setProfile(null);
         setShowRoleSelection(false);
@@ -626,15 +656,21 @@ export default function App() {
 
   const handleRoleSelection = async (role: 'client' | 'company') => {
     if (!user) return;
+    const cleanName = user.displayName?.trim() || user.email?.split('@')[0] || 'Usuario';
     const newProfile: UserProfile = {
       uid: user.uid,
-      name: user.displayName || '',
+      name: cleanName,
       email: user.email || '',
       role: role
     };
-    await setDoc(doc(db, 'users', user.uid), newProfile);
+    try {
+      await setDoc(doc(db, 'users', user.uid), newProfile);
+    } catch (err) {
+      console.error("Error saving user profile role:", err);
+    }
     setProfile(newProfile);
     setShowRoleSelection(false);
+    setCurrentPage('home');
   };
 
   // Orders Listener
@@ -1060,7 +1096,7 @@ export default function App() {
                 <option value="dispatcher">Ver como Despacho</option>
                 <option value="preparer">Ver como Preparación</option>
                 <option value="loader">Ver como Cargador</option>
-                <option value="store_sales">Ver como Ventas Tienda</option>
+                <option value="store_sales">Ver como Cajero</option>
                 <option value="driver">Ver como Repartidor</option>
                 <option value="inventory">Ver como Inventarios</option>
               </select>
@@ -1561,6 +1597,7 @@ export default function App() {
               }}
               onReturnsClick={() => setCurrentPage('admin-returns')}
               onDriverRouteClick={() => setCurrentPage('driver-view')}
+              onActivityClick={() => setCurrentPage('admin-activity')}
               onSettingsClick={() => setCurrentPage('admin-settings')}
               onProductsClick={() => setCurrentPage('inventory-view')}
               onCategoriesClick={() => setCurrentPage('admin-categories')}
@@ -1699,20 +1736,57 @@ export default function App() {
             />
           )}
 
+          {currentPage === 'admin-activity' && (
+            <AdminActivityView 
+              orders={allOrders}
+              users={allUsers}
+              routes={allRoutes}
+              onBack={() => setCurrentPage('admin-dashboard')}
+            />
+          )}
+
           {currentPage === 'dispatcher-view' && (
-            <DispatcherView orders={allOrders} routes={allRoutes} users={allUsers} products={products} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
+            profile ? (
+              <DispatcherView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
+            ) : (
+              <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
+                <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Cargando Perfil...</h2>
+              </div>
+            )
           )}
 
           {currentPage === 'dispatcher-history' && (
-            <DispatcherView orders={allOrders} routes={allRoutes} users={allUsers} products={products} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
+            profile ? (
+              <DispatcherView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
+            ) : (
+              <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
+                <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Cargando Perfil...</h2>
+              </div>
+            )
           )}
 
           {currentPage === 'preparer-view' && (
-            <PreparerView orders={allOrders} routes={allRoutes} products={products} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
+            profile ? (
+              <PreparerView orders={allOrders} routes={allRoutes} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
+            ) : (
+              <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
+                <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Cargando Perfil...</h2>
+              </div>
+            )
           )}
 
           {currentPage === 'preparer-history' && (
-            <PreparerView orders={allOrders} routes={allRoutes} products={products} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
+            profile ? (
+              <PreparerView orders={allOrders} routes={allRoutes} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
+            ) : (
+              <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
+                <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Cargando Perfil...</h2>
+              </div>
+            )
           )}
 
           {currentPage === 'driver-view' && (
@@ -1762,23 +1836,45 @@ export default function App() {
           )}
 
           {currentPage === 'loader-view' && (
-            <LoaderView orders={allOrders} routes={allRoutes} users={allUsers} products={products} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
+            profile ? (
+              <LoaderView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
+            ) : (
+              <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
+                <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Cargando Perfil...</h2>
+              </div>
+            )
           )}
 
           {currentPage === 'loader-history' && (
-            <LoaderView orders={allOrders} routes={allRoutes} users={allUsers} products={products} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
+            profile ? (
+              <LoaderView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
+            ) : (
+              <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
+                <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Cargando Perfil...</h2>
+              </div>
+            )
           )}
 
           {currentPage === 'store-sales-view' && (
-            <StoreSalesView 
-              orders={allOrders} 
-              onBack={() => setCurrentPage('home')} 
-              onNewOrderClick={() => {
-                setIsStoreOrdering(true);
-                setCurrentPage('home');
-              }}
-              showToast={showToast}
-            />
+            profile ? (
+              <StoreSalesView 
+                orders={allOrders} 
+                profile={profile}
+                onBack={() => setCurrentPage('home')} 
+                onNewOrderClick={() => {
+                  setIsStoreOrdering(true);
+                  setCurrentPage('home');
+                }}
+                showToast={showToast}
+              />
+            ) : (
+              <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
+                <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
+                <h2 className="text-xl font-bold text-gray-900 mb-2">Cargando Perfil...</h2>
+              </div>
+            )
           )}
 
           {currentPage === 'inventory-view' && (

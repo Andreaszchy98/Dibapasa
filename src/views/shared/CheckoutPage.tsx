@@ -3,10 +3,11 @@ import { motion } from 'motion/react';
 import { ChevronRight, Truck, Package, User as UserIcon, Phone, FileText, Loader2, CreditCard, CheckCircle2, ShieldCheck, Info, Calendar, AlertTriangle } from 'lucide-react';
 import { Button, Input } from '../../components/ui';
 import { cn } from '../../components/ui';
-import { Product, UserProfile, Order } from '../../types';
+import { Product, UserProfile, Order, OrderItem } from '../../types';
 import { INITIAL_PRODUCTS } from '../../constants';
 import { AddressPicker } from './AddressPicker';
 import { calculateRoadDistance } from '../../lib/utils';
+import { calculateOrderPricing } from '../../lib/orders';
 
 export interface CheckoutPageProps {
   cart: Record<string, number>;
@@ -87,6 +88,18 @@ export function CheckoutPage({
     const p = products.find((prod) => prod.id === id) || INITIAL_PRODUCTS.find(prod => prod.id === id);
     return { ...p, qty };
   });
+
+  const pricingSummary = useMemo(() => {
+    const orderItems: OrderItem[] = items.map(item => ({
+      productId: item.id || '',
+      name: item.name || '',
+      quantity: item.qty || 0,
+      price: item.price || 0,
+      unit: item.unit || 'Paq',
+      approxWeight: item.approxWeight || 0
+    }));
+    return calculateOrderPricing(orderItems, deliveryFee, 0);
+  }, [items, deliveryFee]);
 
   useEffect(() => {
     async function updateDistance() {
@@ -392,7 +405,7 @@ export function CheckoutPage({
           <div className="bg-[#0056b3]/5 p-4 rounded-xl space-y-2">
             <div className="flex justify-between text-sm text-gray-600">
               <span>Subtotal Productos</span>
-              <span>${(total || 0).toFixed(2)}</span>
+              <span>${pricingSummary.subtotal.toFixed(2)}</span>
             </div>
             {items.some(i => i.unit === 'Kg') && (
               <div className="p-2 bg-orange-50 border border-orange-100 rounded-lg">
@@ -421,11 +434,11 @@ export function CheckoutPage({
             )}
             <div className="flex justify-between text-sm text-gray-600">
               <span>IVA Incluido (16%)</span>
-              <span>${(((total || 0) + deliveryFee) - (((total || 0) + deliveryFee) / 1.16)).toFixed(2)}</span>
+              <span>${(pricingSummary.total - (pricingSummary.total / 1.16)).toFixed(2)}</span>
             </div>
             <div className="flex justify-between font-bold text-lg text-blue-900 pt-2 border-t border-blue-900/10">
               <span>Total</span>
-              <span>${((total || 0) + deliveryFee).toFixed(2)}</span>
+              <span>${pricingSummary.total.toFixed(2)}</span>
             </div>
           </div>
           <div className="flex gap-3">

@@ -6,6 +6,8 @@ import { Button, cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Order, DeliveryRoute, UserProfile, Product } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
+import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
+import { calculateOrderPricing } from '../../lib/orders';
 
 export function LoaderView({ 
   orders, 
@@ -66,13 +68,7 @@ export function LoaderView({
         };
       });
 
-      let adjustedTotal = order.total;
-      const hasKgItems = updatedItems.some(item => item.unit === 'Kg');
-      if (hasKgItems) {
-        const nonKgItemsTotal = updatedItems.filter(i => i.unit !== 'Kg').reduce((sum, i) => sum + (i.price * i.quantity), 0);
-        const kgItemsTotal = updatedItems.filter(i => i.unit === 'Kg').reduce((sum, i) => sum + (i.price * (i.loaderWeight || 0)), 0);
-        adjustedTotal = nonKgItemsTotal + kgItemsTotal + (order.deliveryFee || 0);
-      }
+      const { total: adjustedTotal } = calculateOrderPricing(updatedItems, order.deliveryFee, order.discount);
 
       await updateDoc(doc(db, 'orders', order.id), { 
         status: 'ready',
@@ -85,9 +81,10 @@ export function LoaderView({
       for (const item of order.items) {
         const product = products.find(p => p.id === item.productId);
         if (product) {
+          const delta = calculateOrderStatusInventoryDelta(order.status, 'ready', item.quantity);
           await updateDoc(doc(db, 'products', product.id), {
-            stock: Math.max(0, product.stock - item.quantity),
-            reserved: Math.max(0, product.reserved - item.quantity)
+            stock: Math.max(0, (product.stock || 0) + delta.stockDelta),
+            reserved: Math.max(0, (product.reserved || 0) + delta.reservedDelta)
           });
         }
       }
@@ -124,9 +121,7 @@ export function LoaderView({
           };
         });
 
-        const nonKgItemsTotal = updatedItems.filter(i => i.unit !== 'Kg').reduce((sum, i) => sum + (i.price * i.quantity), 0);
-        const kgItemsTotal = updatedItems.filter(i => i.unit === 'Kg').reduce((sum, i) => sum + (i.price * (i.loaderWeight || 0)), 0);
-        const adjustedTotal = nonKgItemsTotal + kgItemsTotal + (order.deliveryFee || 0);
+        const { total: adjustedTotal } = calculateOrderPricing(updatedItems, order.deliveryFee, order.discount);
 
         updateData.items = updatedItems;
         updateData.adjustedTotal = adjustedTotal;

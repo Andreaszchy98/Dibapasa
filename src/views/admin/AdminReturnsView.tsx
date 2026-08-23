@@ -6,6 +6,7 @@ import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
 import { Return, Product, ToastType } from '../../types';
+import { processReturnStockResolution, calculateWasteLossValue } from '../../lib/inventory';
 
 export function AdminReturnsView({ 
   returns, 
@@ -33,24 +34,25 @@ export function AdminReturnsView({
       
       await updateDoc(doc(db, 'returns', ret.id), updateData);
 
-      if (resolution === 'stock') {
-        for (const item of ret.items) {
-          const product = products.find(p => p.id === item.productId);
-          if (product) {
-            await updateDoc(doc(db, 'products', product.id), {
-              stock: product.stock + item.quantity
-            });
-          }
-        }
-      } else if (resolution === 'waste') {
-        for (const item of ret.items) {
-          const currentProduct = products.find(p => p.id === item.productId);
+      for (const item of ret.items) {
+        const product = products.find(p => p.id === item.productId);
+        const currentStock = product?.stock || 0;
+        const { newStock, wasteUnits } = processReturnStockResolution(currentStock, item.quantity, resolution);
+
+        if (resolution === 'stock' && product) {
+          await updateDoc(doc(db, 'products', product.id), {
+            stock: newStock
+          });
+        } else if (resolution === 'waste') {
+          const estimatedLoss = calculateWasteLossValue(product?.price || item.price || 0, wasteUnits);
           await addDoc(collection(db, 'inventoryRequests'), {
             productId: item.productId,
             productName: item.name,
             type: 'waste',
-            oldValue: currentProduct?.stock || 0,
-            newValue: (currentProduct?.stock || 0) - item.quantity,
+            oldValue: currentStock,
+            newValue: currentStock,
+            wasteUnits: wasteUnits,
+            estimatedLoss: estimatedLoss,
             reason: `Devolución - Merma: ${item.reason}`,
             status: 'approved',
             requestedBy: 'system',

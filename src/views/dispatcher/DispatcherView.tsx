@@ -7,6 +7,7 @@ import { cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Order, DeliveryRoute, UserProfile, Product } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
+import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
 
 export function DispatcherView({ 
   orders, 
@@ -179,9 +180,12 @@ export function DispatcherView({
         for (const item of order.items) {
           const product = products.find(p => p.id === item.productId);
           if (product) {
-            await updateDoc(doc(db, 'products', product.id), {
-              reserved: (product.reserved || 0) + item.quantity
-            });
+            const delta = calculateOrderStatusInventoryDelta(order.status, 'processing', item.quantity);
+            if (delta.reservedDelta !== 0 || delta.stockDelta !== 0) {
+              await updateDoc(doc(db, 'products', product.id), {
+                reserved: Math.max(0, (product.reserved || 0) + delta.reservedDelta)
+              });
+            }
           }
         }
       }
@@ -217,9 +221,12 @@ export function DispatcherView({
         for (const item of order.items) {
           const product = products.find(p => p.id === item.productId);
           if (product) {
-            await updateDoc(doc(db, 'products', product.id), {
-              reserved: (product.reserved || 0) + item.quantity
-            });
+            const delta = calculateOrderStatusInventoryDelta(order.status, 'processing', item.quantity);
+            if (delta.reservedDelta !== 0 || delta.stockDelta !== 0) {
+              await updateDoc(doc(db, 'products', product.id), {
+                reserved: Math.max(0, (product.reserved || 0) + delta.reservedDelta)
+              });
+            }
           }
         }
       }
@@ -269,9 +276,12 @@ export function DispatcherView({
         for (const item of order.items) {
           const product = products.find(p => p.id === item.productId);
           if (product) {
-            await updateDoc(doc(db, 'products', product.id), {
-              reserved: (product.reserved || 0) + item.quantity
-            });
+            const delta = calculateOrderStatusInventoryDelta(order.status, 'processing', item.quantity);
+            if (delta.reservedDelta !== 0 || delta.stockDelta !== 0) {
+              await updateDoc(doc(db, 'products', product.id), {
+                reserved: Math.max(0, (product.reserved || 0) + delta.reservedDelta)
+              });
+            }
           }
         }
       }

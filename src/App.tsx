@@ -9,12 +9,13 @@ import { Search, ShoppingCart, Home as HomeIcon, ClipboardList, History, User as
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { motion, AnimatePresence } from 'motion/react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { Button, Input, KLogo, cn } from './components/ui';
 import { OSMMap } from './components/OSMMap';
 import { searchOSMPlaces, reverseOSMGeocode, reverseOSMDetails, getOSRMRoute, OSMPlace, RouteResult, calculateStraightDistance } from './lib/osm';
 import { generateInvoicePDF } from './lib/invoice';
 import { fileToBase64, compressImage, compressImageToBlob, transformImageUrl, sortOrdersByWindowAndDistance } from './lib/utils';
+import { validateStockAvailability } from './lib/inventory';
+import { calculateOrderPricing } from './lib/orders';
 
 // Modular Views
 import {
@@ -67,22 +68,6 @@ function getDeliveryFee(roadDistance: number) {
   return 180;
 }
 
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
-
-// --- Components ---
-
-const KLogo = ({ size = 'w-10 h-10', className, logoUrl }: { size?: string, className?: string, logoUrl?: string }) => (
-  <div className={cn(size, "rounded-xl flex items-center justify-center text-white font-black shadow-sm shrink-0 overflow-hidden", (!logoUrl || !logoUrl.trim()) && "bg-blue-900", className)}>
-    {logoUrl && logoUrl.trim() ? (
-      <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-    ) : (
-      "D"
-    )}
-  </div>
-);
-
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
   constructor(props: { children: React.ReactNode }) {
     super(props);
@@ -133,40 +118,6 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { has
     return this.props.children;
   }
 }
-
-interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'default' | 'danger';
-  size?: 'sm' | 'md' | 'lg';
-}
-
-const Button: React.FC<ButtonProps> = ({ className, variant = 'primary', size = 'md', ...props }) => {
-  const variants: Record<string, string> = {
-    primary: 'bg-blue-900 text-white hover:bg-blue-950',
-    secondary: 'bg-gray-100 text-gray-900 hover:bg-gray-200',
-    outline: 'border-2 border-blue-900 text-blue-900 hover:bg-blue-900 hover:text-white',
-    ghost: 'text-gray-600 hover:bg-gray-100',
-    default: 'bg-gray-900 text-white hover:bg-gray-800',
-    danger: 'bg-red-600 text-white hover:bg-red-700'
-  };
-  const sizes: Record<string, string> = {
-    sm: 'px-2 py-1 text-sm',
-    md: 'px-4 py-2',
-    lg: 'px-6 py-3 text-lg'
-  };
-  return (
-    <button 
-      className={cn('rounded-lg font-medium transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none', variants[variant] || variants.primary, sizes[size] || sizes.md, className)} 
-      {...props} 
-    />
-  );
-};
-
-const Input: React.FC<React.InputHTMLAttributes<HTMLInputElement>> = ({ className, ...props }) => (
-  <input 
-    className={cn('w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-900/20 focus:border-blue-900 transition-all', className)} 
-    {...props} 
-  />
-);
 
 // --- Main App ---
 
@@ -777,15 +728,16 @@ export default function App() {
     const product = products.find(p => p.id === productId);
     if (!product) return;
     
-    const availableStock = (product.stock || 0) - (product.reserved || 0);
-    
     setCart(prev => {
       const currentQty = prev[productId] || 0;
       let newQty = currentQty + delta;
-      
-      if (delta > 0 && newQty > availableStock) {
-        showToast(`Solo hay ${availableStock} piezas disponibles de ${product.name}`, 'info');
-        newQty = availableStock;
+
+      if (delta > 0) {
+        const validation = validateStockAvailability(product, newQty);
+        if (!validation.isValid) {
+          showToast(validation.message || `Solo hay ${validation.availableStock} piezas disponibles de ${product.name}`, 'info');
+          newQty = validation.availableStock;
+        }
       }
 
       if (newQty <= 0) {
@@ -800,12 +752,13 @@ export default function App() {
     const product = products.find(p => p.id === productId);
     if (!product) return;
     
-    const availableStock = (product.stock || 0) - (product.reserved || 0);
     let finalQty = quantity;
-    
-    if (finalQty > availableStock) {
-      showToast(`Solo hay ${availableStock} piezas disponibles de ${product.name}`, 'info');
-      finalQty = availableStock;
+    if (finalQty > 0) {
+      const validation = validateStockAvailability(product, finalQty);
+      if (!validation.isValid) {
+        showToast(validation.message || `Solo hay ${validation.availableStock} piezas disponibles de ${product.name}`, 'info');
+        finalQty = validation.availableStock;
+      }
     }
 
     setCart(prev => {
@@ -854,6 +807,8 @@ export default function App() {
       };
     });
 
+    const pricing = calculateOrderPricing(orderItems, deliveryFee, 0);
+
     const pickupCode = Math.random().toString(36).substring(2, 8).toUpperCase();
 
     const isStoreSale = isStoreOrdering || profile.role === 'store_sales';
@@ -864,7 +819,7 @@ export default function App() {
       userEmail: (isDriverOrdering || isStoreSale) ? `${isDriverOrdering ? 'driver' : 'store'}@dibapasa.com` : (profile.email || ''),
       userPhone: (isDriverOrdering || isStoreSale) ? '' : (profile.phone || ''),
       items: orderItems || [],
-      total: Number((cartTotal || 0) + (deliveryFee || 0)) || 0,
+      total: pricing.total,
       status: isStoreSale ? 'processing' : 'pending',
       type: isStoreSale ? 'pickup' : (type || 'delivery'),
       pickupCode: pickupCode || 'ERROR', 

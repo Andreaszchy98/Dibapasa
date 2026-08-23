@@ -47,8 +47,8 @@ Input.displayName = 'Input';
 
 export const KLogo = ({ size = 'w-10 h-10', className, logoUrl }: { size?: string, className?: string, logoUrl?: string }) => (
   <div className={cn(size, "relative flex items-center justify-center rounded-xl bg-blue-900 text-white shadow-sm overflow-hidden flex-shrink-0", className)}>
-    {logoUrl ? (
-      <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
+    {logoUrl && logoUrl.trim() ? (
+      <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
     ) : (
       <span className="font-black text-xl tracking-tighter text-white">D</span>
     )}

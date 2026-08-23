@@ -7,6 +7,7 @@ import { cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Order, UserProfile, Product } from '../../types';
 import { generateInvoicePDF } from '../../lib/invoice';
+import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
 
 export function AdminOrdersView({ 
   orders, 
@@ -61,22 +62,25 @@ export function AdminOrdersView({
     try {
       await updateDoc(doc(db, 'orders', order.id), { status: 'cancelled' });
       
-      if (order.status === 'processing') {
-        for (const item of order.items) {
-          const product = products.find(p => p.id === item.productId);
-          if (product) {
-            await updateDoc(doc(db, 'products', product.id), {
-              reserved: Math.max(0, (product.reserved || 0) - item.quantity)
-            });
+      for (const item of order.items) {
+        const product = products.find(p => p.id === item.productId);
+        if (product) {
+          const delta = calculateOrderStatusInventoryDelta(order.status, 'cancelled', item.quantity);
+          const updates: Record<string, number> = {};
+          
+          if (delta.reservedDelta !== 0) {
+            updates.reserved = Math.max(0, (product.reserved || 0) + delta.reservedDelta);
           }
-        }
-      } else if (['ready', 'shipped', 'delivered'].includes(order.status)) {
-        for (const item of order.items) {
-          const product = products.find(p => p.id === item.productId);
-          if (product) {
-            await updateDoc(doc(db, 'products', product.id), {
-              stock: (product.stock || 0) + item.quantity
-            });
+          if (delta.stockDelta !== 0) {
+            updates.stock = Math.max(0, (product.stock || 0) + delta.stockDelta);
+          }
+          // If the order was already physically deducted (e.g. ready/shipped/delivered), restore the physical stock
+          if (['ready', 'shipped', 'delivered'].includes(order.status) && delta.stockDelta === 0) {
+            updates.stock = (product.stock || 0) + item.quantity;
+          }
+
+          if (Object.keys(updates).length > 0) {
+            await updateDoc(doc(db, 'products', product.id), updates);
           }
         }
       }

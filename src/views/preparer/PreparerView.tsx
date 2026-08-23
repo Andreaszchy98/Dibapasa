@@ -6,6 +6,8 @@ import { Button, cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Order, DeliveryRoute, Product } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
+import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
+import { calculateOrderPricing } from '../../lib/orders';
 
 export function PreparerView({ 
   orders, 
@@ -53,14 +55,7 @@ export function PreparerView({
         ...(item.unit === 'Kg' ? { preparerWeight: parseFloat(itemWeights[item.productId]) || 0 } : {})
       }));
 
-      const newSubtotal = updatedItems.reduce((sum, item) => {
-        if (item.unit === 'Kg') {
-          return sum + ((item.preparerWeight || 0) * item.price);
-        }
-        return sum + (item.quantity * item.price);
-      }, 0);
-      
-      const newTotal = newSubtotal + (order.deliveryFee || 0);
+      const { total: newTotal } = calculateOrderPricing(updatedItems, order.deliveryFee, order.discount);
 
       await updateDoc(doc(db, 'orders', order.id), { 
         status: 'ready',
@@ -73,9 +68,10 @@ export function PreparerView({
       for (const item of order.items) {
         const product = products.find(p => p.id === item.productId);
         if (product) {
+          const delta = calculateOrderStatusInventoryDelta(order.status, 'ready', item.quantity);
           await updateDoc(doc(db, 'products', product.id), {
-            stock: Math.max(0, product.stock - item.quantity),
-            reserved: Math.max(0, product.reserved - item.quantity)
+            stock: Math.max(0, (product.stock || 0) + delta.stockDelta),
+            reserved: Math.max(0, (product.reserved || 0) + delta.reservedDelta)
           });
         }
       }

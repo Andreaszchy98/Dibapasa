@@ -119,6 +119,7 @@ export interface Order {
   onboarded?: boolean;
   deliveryFee?: number;
   deliveryDistance?: number;
+  discount?: number;
   adjustedTotal?: number;
   hasReturns?: boolean;
   returnedItems?: OrderItem[];

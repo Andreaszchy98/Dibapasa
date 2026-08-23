@@ -1741,6 +1741,7 @@ export default function App() {
               orders={allOrders}
               users={allUsers}
               routes={allRoutes}
+              returns={allReturns}
               onBack={() => setCurrentPage('admin-dashboard')}
             />
           )}

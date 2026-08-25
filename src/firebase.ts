@@ -24,18 +24,6 @@ enableMultiTabIndexedDbPersistence(db).catch((err) => {
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
-async function testConnection() {
-  try {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      return;
-    }
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    // Normal when offline or during transient network changes - ignore test connection errors
-  }
-}
-testConnection();
-
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',

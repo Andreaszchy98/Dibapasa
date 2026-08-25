@@ -466,7 +466,18 @@ export function DriverView({
                             </div>
                           )}
                           <div className="flex-1 min-w-0">
-                            <p className="text-xs font-bold text-gray-900 truncate">{item.name}</p>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="text-xs font-bold text-gray-900 truncate">{item.name}</p>
+                              {item.packaging === 'jaba' ? (
+                                <span className="text-[9px] bg-amber-100 text-amber-900 font-bold px-1.5 py-0.2 rounded border border-amber-200">
+                                  📦 Jaba
+                                </span>
+                              ) : (
+                                <span className="text-[9px] bg-gray-100 text-gray-600 font-medium px-1.5 py-0.2 rounded">
+                                  🛍️ Bolsa
+                                </span>
+                              )}
+                            </div>
                             <div className="flex flex-col">
                               {item.unit === 'Kg' ? (
                                 <>
@@ -479,6 +490,11 @@ export function DriverView({
                                 </>
                               ) : (
                                 <p className="text-[10px] text-gray-500">{item.quantity}x ${(item.price).toFixed(2)}</p>
+                              )}
+                              {(item.comment || item.notes) && (
+                                <p className="text-[10px] text-amber-800 italic mt-0.5">
+                                  💬 "{item.comment || item.notes}"
+                                </p>
                               )}
                             </div>
                           </div>

@@ -8,6 +8,7 @@ import { INITIAL_PRODUCTS } from '../../constants';
 import { AddressPicker } from './AddressPicker';
 import { calculateRoadDistance } from '../../lib/utils';
 import { calculateOrderPricing } from '../../lib/orders';
+import { geocodeOSMAddress } from '../../lib/osm';
 
 export interface CheckoutPageProps {
   cart: Record<string, number>;
@@ -117,13 +118,86 @@ export function CheckoutPage({
     updateDistance();
   }, [orderType, addressLocation, shopLocation]);
 
+  const handleProceedToReview = async () => {
+    if (orderType === 'delivery') {
+      let loc = addressLocation;
+      // If no location was selected or location is identical to shop, try geocoding
+      if (!loc || (shopLocation && loc.lat === shopLocation.lat && loc.lng === shopLocation.lng)) {
+        setIsCalculatingDistance(true);
+        const geocoded = await geocodeOSMAddress(address);
+        if (geocoded) {
+          loc = { lat: geocoded.lat, lng: geocoded.lng };
+          setAddressLocation(loc);
+          if (shopLocation) {
+            const res = await calculateRoadDistance(shopLocation, loc);
+            setDeliveryFee(res.fee);
+            setDeliveryDistance(Math.max(1.5, res.distance));
+          }
+        } else {
+          // Fallback to reasonable city delivery coordinates so it's never 0 km
+          const fallbackLoc = { lat: 23.2425, lng: -106.4150 };
+          setAddressLocation(fallbackLoc);
+          if (shopLocation) {
+            const res = await calculateRoadDistance(shopLocation, fallbackLoc);
+            setDeliveryFee(res.fee);
+            setDeliveryDistance(Math.max(2.5, res.distance));
+          } else {
+            setDeliveryDistance(3.5);
+            setDeliveryFee(45);
+          }
+        }
+        setIsCalculatingDistance(false);
+      } else if (deliveryDistance <= 0) {
+        setIsCalculatingDistance(true);
+        const res = await calculateRoadDistance(shopLocation, loc);
+        setDeliveryFee(res.fee);
+        setDeliveryDistance(Math.max(1.5, res.distance));
+        setIsCalculatingDistance(false);
+      }
+    }
+    setStep('review');
+  };
+
   const handleConfirm = async () => {
     if (!isOnline) {
       alert("Debes estar conectado a internet para finalizar este pedido. Por favor, revisa tu conexión.");
       return;
     }
     setIsProcessing(true);
-    await onConfirm(address, deliverySlot, paymentMethod, recipientName, orderType, notes, addressLocation, deliveryFee, deliveryDistance, deliveryWindowStart, deliveryWindowEnd);
+    let finalLoc = addressLocation;
+    let finalDistance = deliveryDistance;
+    let finalFee = deliveryFee;
+
+    if (orderType === 'delivery') {
+      if (!finalLoc) {
+        const geocoded = await geocodeOSMAddress(address);
+        finalLoc = geocoded ? { lat: geocoded.lat, lng: geocoded.lng } : { lat: 23.2425, lng: -106.4150 };
+      }
+      if (!finalDistance || finalDistance <= 0) {
+        if (shopLocation && finalLoc) {
+          const res = await calculateRoadDistance(shopLocation, finalLoc);
+          finalDistance = Math.max(1.5, res.distance);
+          finalFee = res.fee > 0 ? res.fee : 30;
+        } else {
+          finalDistance = 3.0;
+          finalFee = 35;
+        }
+      }
+    }
+
+    await onConfirm(
+      address, 
+      deliverySlot, 
+      paymentMethod, 
+      recipientName, 
+      orderType, 
+      notes, 
+      finalLoc, 
+      finalFee, 
+      finalDistance, 
+      deliveryWindowStart, 
+      deliveryWindowEnd
+    );
     setIsProcessing(false);
   };
 
@@ -339,12 +413,7 @@ export function CheckoutPage({
           <div className="flex gap-3">
             <Button variant="outline" onClick={() => setStep('type')} className="flex-1">Atrás</Button>
             <Button 
-              onClick={() => {
-                if (!addressLocation) {
-                  setAddressLocation({ lat: shopLocation.lat, lng: shopLocation.lng });
-                }
-                setStep('review');
-              }} 
+              onClick={handleProceedToReview} 
               disabled={!address || isCalculatingDistance} 
               className="flex-[2]"
             >

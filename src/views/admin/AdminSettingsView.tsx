@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { ChevronRight, Loader2, Image, Plus, MapPin, Edit, Locate } from 'lucide-react';
+import { ChevronRight, Loader2, Image, Plus, MapPin, Edit, Locate, Box } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
 import { ref as sRef, deleteObject } from 'firebase/storage';
 import { db, storage, uploadImage, handleFirestoreError, OperationType } from '../../firebase';
@@ -28,6 +28,7 @@ export function AdminSettingsView({
   const [shopAddress, setShopAddress] = useState(settings?.shopAddress || DEFAULT_TENANT_CONFIG.defaultLocation.address);
   const [shopLat, setShopLat] = useState(settings?.shopLat || DEFAULT_TENANT_CONFIG.defaultLocation.lat);
   const [shopLng, setShopLng] = useState(settings?.shopLng || DEFAULT_TENANT_CONFIG.defaultLocation.lng);
+  const [containerUnitCost, setContainerUnitCost] = useState<number | string>(settings?.containerUnitCost ?? 150);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isEditingLocation, setIsEditingLocation] = useState(false);
@@ -89,8 +90,9 @@ export function AdminSettingsView({
         appName,
         shopAddress,
         shopLat: Number(shopLat),
-        shopLng: Number(shopLng)
-      });
+        shopLng: Number(shopLng),
+        containerUnitCost: Math.max(0, Number(containerUnitCost) || 0)
+      }, { merge: true });
       showToast('Configuración guardada correctamente', 'success');
       onBack();
     } catch (error) {
@@ -252,6 +254,32 @@ export function AdminSettingsView({
           <p className="text-[10px] text-gray-400 italic">
             * Estos datos se usan para calcular las distancias de envío y el punto de partida en el mapa.
           </p>
+        </div>
+
+        {/* Jaba / Retornables Unit Cost */}
+        <div className="pt-4 border-t border-gray-50 space-y-3">
+          <div className="flex items-center gap-2">
+            <Box className="w-4 h-4 text-orange-500" />
+            <h3 className="text-sm font-bold text-gray-900">Control de Jabas Retornables (Karey Alimentos)</h3>
+          </div>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            Costo unitario por jaba que cobra el proveedor en caso de extravío o faltante en la ruta. Se usará para calcular el monto del vale de adeudo al chofer.
+          </p>
+          <div className="space-y-1.5">
+            <label className="text-[10px] font-bold text-gray-400 uppercase ml-1">Costo Unitario por Jaba ($ MXN)</label>
+            <div className="relative max-w-xs">
+              <span className="absolute left-3.5 top-2.5 text-sm font-bold text-gray-400">$</span>
+              <Input 
+                type="number" 
+                min="0"
+                step="1"
+                value={containerUnitCost} 
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setContainerUnitCost(e.target.value)} 
+                placeholder="150"
+                className="pl-8 font-bold text-sm h-10"
+              />
+            </div>
+          </div>
         </div>
 
         <Button onClick={handleSave} className="w-full py-4" disabled={isSaving || isUploading}>

@@ -261,29 +261,64 @@ export function AdminOrdersView({
                 <div className="space-y-2">
                   <p className="text-[10px] text-gray-400 font-bold uppercase ml-1">Productos</p>
                   <div className="space-y-2">
-                    {selectedOrder.items.map((item, i) => (
-                      <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
-                        <div className="flex items-center gap-3">
-                          <span className="w-6 h-6 bg-white rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500 border border-gray-100">
-                            {item.quantity}
-                          </span>
-                          <span className="text-xs font-medium text-gray-900">{item.name}</span>
+                    {selectedOrder.items.map((item, i) => {
+                      const itemTotal = item.unit === 'Kg'
+                        ? (item.price * (item.loaderWeight || item.preparerWeight || (item.approxWeight ? item.approxWeight * item.quantity : item.quantity)))
+                        : (item.price * item.quantity);
+                      return (
+                        <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl">
+                          <div className="flex items-center gap-3">
+                            <span className="w-6 h-6 bg-white rounded-full flex items-center justify-center text-[10px] font-bold text-gray-500 border border-gray-100">
+                              {item.quantity}
+                            </span>
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-xs font-medium text-gray-900">{item.name}</span>
+                                {item.packaging === 'jaba' ? (
+                                  <span className="text-[9px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded border border-amber-200">
+                                    📦 Jaba
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] bg-gray-100 text-gray-600 font-medium px-1.5 py-0.2 rounded">
+                                    🛍️ Bolsa
+                                  </span>
+                                )}
+                              </div>
+                              {item.unit === 'Kg' && (
+                                <span className="text-[10px] text-gray-400 block">
+                                  {item.loaderWeight || item.preparerWeight 
+                                    ? `Pesado: ${item.loaderWeight || item.preparerWeight} Kg` 
+                                    : `Est: ${item.approxWeight ? (item.approxWeight * item.quantity).toFixed(2) : item.quantity} Kg ($${item.price.toFixed(2)}/Kg)`}
+                                </span>
+                              )}
+                              {(item.comment || item.notes) && (
+                                <span className="text-[10px] text-amber-800 italic block mt-0.5">
+                                  💬 "{item.comment || item.notes}"
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <span className="text-xs font-bold text-gray-900">${itemTotal.toFixed(2)}</span>
                         </div>
-                        <span className="text-xs font-bold text-gray-900">${(item.price * item.quantity).toFixed(2)}</span>
-                      </div>
-                    ))}
-                    {(selectedOrder.returnedItems || []).map((item, i) => (
-                      <div key={`ret-${i}`} className="flex justify-between items-center p-3 bg-orange-50/50 border border-dashed border-orange-100 rounded-xl opacity-70">
-                        <div className="flex items-center gap-3">
-                          <RotateCcw className="w-4 h-4 text-orange-400" />
-                          <span className="w-6 h-6 bg-white rounded-full flex items-center justify-center text-[10px] font-bold text-orange-500 border border-orange-100">
-                            {item.quantity}
-                          </span>
-                          <span className="text-xs font-medium text-orange-900 line-through">{item.name}</span>
+                      );
+                    })}
+                    {(selectedOrder.returnedItems || []).map((item, i) => {
+                      const retTotal = item.unit === 'Kg'
+                        ? (item.price * (item.approxWeight ? item.approxWeight * item.quantity : item.quantity))
+                        : (item.price * item.quantity);
+                      return (
+                        <div key={`ret-${i}`} className="flex justify-between items-center p-3 bg-orange-50/50 border border-dashed border-orange-100 rounded-xl opacity-70">
+                          <div className="flex items-center gap-3">
+                            <RotateCcw className="w-4 h-4 text-orange-400" />
+                            <span className="w-6 h-6 bg-white rounded-full flex items-center justify-center text-[10px] font-bold text-orange-500 border border-orange-100">
+                              {item.quantity}
+                            </span>
+                            <span className="text-xs font-medium text-orange-900 line-through">{item.name}</span>
+                          </div>
+                          <span className="text-xs font-bold text-orange-900">-${retTotal.toFixed(2)}</span>
                         </div>
-                        <span className="text-xs font-bold text-orange-900">-${(item.price * item.quantity).toFixed(2)}</span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 

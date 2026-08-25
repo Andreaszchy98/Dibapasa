@@ -19,13 +19,22 @@ export function calculateOrderPricing(
     const qty = Number(item.quantity) || 0;
     const price = Number(item.price) || 0;
     // If weighed by preparer/loader and unit is Kg/Approx
-    const effectiveQty = (item.loaderWeight !== undefined && item.loaderWeight > 0)
-      ? item.loaderWeight
-      : (item.preparerWeight !== undefined && item.preparerWeight > 0)
-        ? item.preparerWeight
-        : qty;
+    if (item.unit === 'Kg') {
+      const weighedAmount = (item.loaderWeight !== undefined && item.loaderWeight > 0)
+        ? item.loaderWeight
+        : (item.preparerWeight !== undefined && item.preparerWeight > 0)
+          ? item.preparerWeight
+          : undefined;
 
-    return acc + (effectiveQty * price);
+      if (weighedAmount !== undefined) {
+        return acc + (weighedAmount * price);
+      }
+      // Estimated suggested subtotal: quantity * approxWeight * price per kg
+      const approxWeight = Number(item.approxWeight) || 1;
+      return acc + (qty * approxWeight * price);
+    }
+
+    return acc + (qty * price);
   }, 0);
 
   const cleanSubtotal = Math.round(subtotal * 100) / 100;

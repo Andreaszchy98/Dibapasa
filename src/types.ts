@@ -82,6 +82,12 @@ export interface OrderItem {
   approxWeight?: number;
   preparerWeight?: number;
   loaderWeight?: number;
+  packaging?: 'bolsa' | 'jaba';
+  comment?: string;
+  notes?: string;
+  checkedAt?: FirestoreTimestamp;
+  preparerCheckedAt?: FirestoreTimestamp;
+  loaderCheckedAt?: FirestoreTimestamp;
 }
 
 export interface Order {
@@ -155,6 +161,19 @@ export interface DeliveryRoute {
   assignedByName?: string;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
+  containerVale?: {
+    qtyOut?: number;
+    qtyOutBy?: string;
+    qtyOutByName?: string;
+    qtyOutAt?: FirestoreTimestamp;
+    qtyReturned?: number;
+    qtyReturnedBy?: string;
+    qtyReturnedByName?: string;
+    qtyReturnedAt?: FirestoreTimestamp;
+    unitCost?: number;
+    status?: 'open' | 'reconciled' | 'shortage';
+    notes?: string;
+  };
 }
 
 export interface AppSettings {
@@ -163,6 +182,7 @@ export interface AppSettings {
   shopAddress?: string;
   shopLat?: number;
   shopLng?: number;
+  containerUnitCost?: number;
 }
 
 export interface ReturnItem {

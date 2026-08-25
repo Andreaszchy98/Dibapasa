@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Truck, Plus, Edit, Trash2, Package, X, CheckCircle, Clock, Store, Calendar, ChevronUp, ChevronDown, CreditCard, Banknote, Phone, Mail, MapPin } from 'lucide-react';
+import { Truck, Plus, Edit, Trash2, Package, X, CheckCircle, Clock, Store, Calendar, ChevronUp, ChevronDown, CreditCard, Banknote, Phone, Mail, MapPin, Box, AlertTriangle } from 'lucide-react';
 import { doc, updateDoc, addDoc, collection, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
 import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
@@ -35,6 +35,12 @@ export function DispatcherView({
   const [isSavingRoute, setIsSavingRoute] = useState(false);
   const [newRouteData, setNewRouteData] = useState({ name: '', unitNumber: '', driverId: '' });
 
+  // Jaba reconciliation modal state
+  const [reconcileRoute, setReconcileRoute] = useState<DeliveryRoute | null>(null);
+  const [returnedJabasCount, setReturnedJabasCount] = useState<number>(0);
+  const [reconcileNotes, setReconcileNotes] = useState<string>('');
+  const [isSavingReconcile, setIsSavingReconcile] = useState(false);
+
   const pendingOrders = orders.filter(o => o.status === 'pending');
   const acceptedOrders = orders.filter(o => o.status === 'accepted');
   const historyOrders = orders.filter(o => o.status !== 'pending' && o.status !== 'accepted' && o.status !== 'processing' && o.status !== 'ready' && o.status !== 'cancelled').slice(0, 50);
@@ -43,6 +49,47 @@ export function DispatcherView({
 
   const toggleExpand = (id: string) => {
     setExpandedOrders(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleOpenReconcileModal = (route: DeliveryRoute) => {
+    setReconcileRoute(route);
+    setReturnedJabasCount(route.containerVale?.qtyReturned ?? (route.containerVale?.qtyOut || 0));
+    setReconcileNotes(route.containerVale?.notes || '');
+  };
+
+  const handleSaveReconciliation = async () => {
+    if (!reconcileRoute || !reconcileRoute.containerVale) return;
+    
+    setIsSavingReconcile(true);
+    const qtyOut = reconcileRoute.containerVale.qtyOut || 0;
+    const qtyReturned = Math.max(0, returnedJabasCount);
+    const shortage = Math.max(0, qtyOut - qtyReturned);
+    const status = shortage > 0 ? 'shortage' : 'reconciled';
+    const unitCost = reconcileRoute.containerVale.unitCost || 150;
+    
+    try {
+      await updateDoc(doc(db, 'routes', reconcileRoute.id), {
+        status: 'completed',
+        'containerVale.qtyReturned': qtyReturned,
+        'containerVale.qtyReturnedBy': profile.uid,
+        'containerVale.qtyReturnedByName': profile.name,
+        'containerVale.qtyReturnedAt': serverTimestamp(),
+        'containerVale.status': status,
+        'containerVale.notes': reconcileNotes
+      });
+      
+      showToast(
+        shortage > 0 
+          ? `Vale conciliado con faltante de ${shortage} jaba(s). Adeudo: $${(shortage * unitCost).toFixed(2)}` 
+          : 'Vale de jabas conciliado con éxito (todas entregadas)', 
+        shortage > 0 ? 'info' : 'success'
+      );
+      setReconcileRoute(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `routes/${reconcileRoute.id}`);
+    } finally {
+      setIsSavingReconcile(false);
+    }
   };
 
   const getTimingStatus = (order: Order) => {
@@ -509,6 +556,66 @@ export function DispatcherView({
                           <span className="text-[10px] font-bold uppercase">Lanzada a Preparación</span>
                         </div>
                       )}
+
+                      {/* Vale de Jabas Karey Section */}
+                      {route.containerVale && route.containerVale.qtyOut ? (
+                        <div className={cn(
+                          "p-3 rounded-xl border text-xs space-y-2 mt-2",
+                          route.containerVale.status === 'shortage' 
+                            ? "bg-red-50/80 border-red-200 text-red-900" 
+                            : route.containerVale.status === 'reconciled'
+                            ? "bg-emerald-50/80 border-emerald-200 text-emerald-900"
+                            : "bg-amber-50/80 border-amber-200 text-amber-900"
+                        )}>
+                          <div className="flex items-center justify-between font-bold">
+                            <div className="flex items-center gap-1.5">
+                              <Box className="w-4 h-4 text-amber-700" />
+                              <span>Vale Jabas Retornables</span>
+                            </div>
+                            <span className={cn(
+                              "text-[10px] px-2 py-0.5 rounded font-black uppercase",
+                              route.containerVale.status === 'shortage' 
+                                ? "bg-red-200 text-red-800" 
+                                : route.containerVale.status === 'reconciled'
+                                ? "bg-emerald-200 text-emerald-800"
+                                : "bg-amber-200 text-amber-800"
+                            )}>
+                              {route.containerVale.status === 'shortage' ? 'Faltante Detectado' : 
+                               route.containerVale.status === 'reconciled' ? 'Conciliado OK' : 'En Ruta (Abierto)'}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 text-[11px] font-medium pt-1">
+                            <div>
+                              <span className="text-gray-500 block text-[10px]">Salieron:</span>
+                              <span className="font-bold">{route.containerVale.qtyOut} jaba(s)</span>
+                              <span className="text-[9px] text-gray-400 block">por {route.containerVale.qtyOutByName || 'Cargador'}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500 block text-[10px]">Regresaron:</span>
+                              <span className="font-bold">{route.containerVale.qtyReturned !== undefined ? `${route.containerVale.qtyReturned} jaba(s)` : 'Pendiente'}</span>
+                              {route.containerVale.qtyReturnedByName && (
+                                <span className="text-[9px] text-gray-400 block">recibió {route.containerVale.qtyReturnedByName}</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {route.containerVale.status === 'shortage' && (
+                            <div className="p-2 bg-white rounded-lg border border-red-200 text-red-700 text-[11px] font-bold flex items-center justify-between">
+                              <span>Faltan: {(route.containerVale.qtyOut || 0) - (route.containerVale.qtyReturned || 0)} jabas</span>
+                              <span>Adeudo Chofer: ${(((route.containerVale.qtyOut || 0) - (route.containerVale.qtyReturned || 0)) * (route.containerVale.unitCost || 150)).toFixed(2)}</span>
+                            </div>
+                          )}
+
+                          <Button
+                            variant="outline"
+                            onClick={() => handleOpenReconcileModal(route)}
+                            className="w-full h-8 text-xs font-bold mt-1 bg-white hover:bg-gray-50"
+                          >
+                            {route.containerVale.status === 'open' ? 'Recibir y Conciliar Jabas' : 'Modificar Conciliación'}
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 );
@@ -816,6 +923,150 @@ export function DispatcherView({
                 }}>Cancelar</Button>
                 <Button className="flex-1 h-12 rounded-2xl bg-red-600 hover:bg-red-700 font-bold" onClick={saveRoute} disabled={isSavingRoute}>
                   {isSavingRoute ? 'Guardando...' : (editingRouteId ? 'Guardar Cambios' : 'Crear Ruta')}
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Jaba Reconciliation Modal */}
+      <AnimatePresence>
+        {reconcileRoute && reconcileRoute.containerVale && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl space-y-5 border border-amber-100"
+            >
+              <div className="flex justify-between items-center pb-3 border-b border-gray-100">
+                <div className="flex items-center gap-2 text-amber-900">
+                  <Box className="w-5 h-5 text-amber-600" />
+                  <h3 className="text-lg font-bold">Conciliación de Jabas</h3>
+                </div>
+                <button 
+                  onClick={() => setReconcileRoute(null)} 
+                  className="p-2 hover:bg-gray-100 rounded-full transition-colors"
+                >
+                  <X className="w-5 h-5 text-gray-400" />
+                </button>
+              </div>
+
+              {/* Route & Driver Info */}
+              <div className="bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200/80 space-y-2 text-xs">
+                <div className="flex justify-between font-bold text-gray-900">
+                  <span>Ruta: {reconcileRoute.name}</span>
+                  <span className="bg-amber-200 text-amber-900 px-2 py-0.5 rounded font-black text-[10px]">Unidad: {reconcileRoute.unitNumber}</span>
+                </div>
+                <p className="text-gray-600">
+                  <strong>Chofer Responsable:</strong> {users.find(u => u.uid === reconcileRoute.driverId)?.name || 'Asignado'}
+                </p>
+                <div className="grid grid-cols-2 gap-2 pt-1 border-t border-amber-200/60 text-[11px]">
+                  <div>
+                    <span className="text-gray-500 block">Jabas que Salieron:</span>
+                    <span className="text-base font-black text-amber-950">{reconcileRoute.containerVale.qtyOut}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Cargadas por:</span>
+                    <span className="font-semibold text-gray-700">{reconcileRoute.containerVale.qtyOutByName || 'Cargador'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Reception inputs */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1.5">
+                    ¿Cuántas Jabas regresó físicamente el chofer?
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setReturnedJabasCount(Math.max(0, returnedJabasCount - 1))}
+                      className="w-11 h-11 rounded-xl bg-gray-100 hover:bg-gray-200 font-black text-lg text-gray-700"
+                    >
+                      -
+                    </button>
+                    <input 
+                      type="number"
+                      min="0"
+                      max={reconcileRoute.containerVale.qtyOut * 2}
+                      value={returnedJabasCount}
+                      onChange={(e) => setReturnedJabasCount(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="flex-1 h-11 bg-gray-50 border border-gray-200 rounded-xl text-center font-bold text-gray-900 text-lg outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setReturnedJabasCount(returnedJabasCount + 1)}
+                      className="w-11 h-11 rounded-xl bg-amber-600 hover:bg-amber-700 font-black text-lg text-white"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+
+                {/* Calculation breakdown */}
+                {(() => {
+                  const qtyOut = reconcileRoute.containerVale.qtyOut || 0;
+                  const shortage = Math.max(0, qtyOut - returnedJabasCount);
+                  const unitCost = reconcileRoute.containerVale.unitCost || 150;
+                  const debt = shortage * unitCost;
+
+                  if (shortage > 0) {
+                    return (
+                      <div className="p-3.5 bg-red-50 rounded-2xl border border-red-200 space-y-1.5 text-xs text-red-900">
+                        <div className="flex items-center gap-2 font-bold text-red-800">
+                          <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                          <span>Faltante de {shortage} Jaba(s)</span>
+                        </div>
+                        <p className="text-[11px] text-red-700">
+                          Salieron {qtyOut} y regresaron {returnedJabasCount}.
+                        </p>
+                        <div className="pt-1.5 border-t border-red-200 flex justify-between items-center font-bold">
+                          <span>Adeudo a cobrar a Chofer:</span>
+                          <span className="text-sm font-black text-red-800">${debt.toFixed(2)} MXN (${unitCost}/c/u)</span>
+                        </div>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="p-3 bg-emerald-50 rounded-2xl border border-emerald-200 flex items-center gap-2 text-xs text-emerald-800 font-bold">
+                        <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Todas las jabas regresaron completas ({returnedJabasCount}/{qtyOut}). Sin adeudo.</span>
+                      </div>
+                    );
+                  }
+                })()}
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-700 mb-1">
+                    Notas u Observaciones del Receptor
+                  </label>
+                  <input 
+                    type="text"
+                    placeholder="Ej. Chofer reportó 1 jaba rota o extraviada en sucursal..."
+                    value={reconcileNotes}
+                    onChange={(e) => setReconcileNotes(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-900 outline-none focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setReconcileRoute(null)} 
+                  className="flex-1"
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  onClick={handleSaveReconciliation} 
+                  disabled={isSavingReconcile}
+                  className="flex-[2] bg-amber-600 hover:bg-amber-700 text-white font-bold"
+                >
+                  {isSavingReconcile ? 'Guardando...' : 'Guardar y Cerrar Vale'}
                 </Button>
               </div>
             </motion.div>

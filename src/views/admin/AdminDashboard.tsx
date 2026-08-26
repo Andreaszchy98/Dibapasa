@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { RotateCcw, ShieldCheck, ChevronRight, Calendar, Package, AlertTriangle, Tags, Settings, ClipboardList, Truck, Activity } from 'lucide-react';
+import { RotateCcw, ShieldCheck, ChevronRight, Calendar, Package, AlertTriangle, Tags, Settings, ClipboardList, Truck, Activity, Box } from 'lucide-react';
 import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
 import { Order, UserProfile } from '../../types';
@@ -17,6 +17,8 @@ export function AdminDashboard({
   onReturnsClick,
   onDriverRouteClick,
   onActivityClick,
+  onUnitsClick,
+  onKareyControlClick,
   onSettingsClick,
   onCategoriesClick,
   onRefresh,
@@ -33,6 +35,8 @@ export function AdminDashboard({
   onReturnsClick: () => void;
   onDriverRouteClick: () => void;
   onActivityClick?: () => void;
+  onUnitsClick?: () => void;
+  onKareyControlClick?: () => void;
   onSettingsClick: () => void;
   onProductsClick?: () => void;
   onCategoriesClick: () => void;
@@ -271,6 +275,42 @@ export function AdminDashboard({
           </div>
           <ChevronRight className="w-5 h-5 text-gray-300" />
         </button>
+
+        {onUnitsClick && (
+          <button 
+            onClick={onUnitsClick}
+            className="col-span-2 bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between hover:border-emerald-200 transition-colors"
+          >
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl">
+                <Truck className="w-6 h-6" />
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-bold text-gray-900">Unidades / Camiones</p>
+                <p className="text-[10px] text-gray-400">Gestiona camiones para rutas y control de jabas</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-gray-300" />
+          </button>
+        )}
+
+        {onKareyControlClick && (
+          <button 
+            onClick={onKareyControlClick}
+            className="col-span-2 bg-white p-5 rounded-3xl border border-amber-200 shadow-sm flex items-center justify-between hover:border-amber-400 transition-colors bg-amber-50/20"
+          >
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-amber-100 text-amber-800 rounded-2xl">
+                <Box className="w-6 h-6" />
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-bold text-amber-950">Módulo Control de Jabas Karey</p>
+                <p className="text-[10px] text-amber-700">Recepción de camiones, conteo JV/JN, transferencias y adeudos</p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-amber-400" />
+          </button>
+        )}
 
         {onActivityClick && (
           <button 

@@ -31,7 +31,7 @@ export function ProfilePage({ profile, onUpdate, effectiveRole, setCurrentPage, 
     );
   }
 
-  const isWorker = ['dispatcher', 'preparer', 'driver', 'loader', 'store_sales'].includes(effectiveRole);
+  const isWorker = ['dispatcher', 'preparer', 'driver', 'loader', 'store_sales', 'inventory', 'karey_inventory'].includes(effectiveRole);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -54,7 +54,8 @@ export function ProfilePage({ profile, onUpdate, effectiveRole, setCurrentPage, 
     driver: 'Conductor',
     loader: 'Cargador',
     inventory: 'Inventarios',
-    store_sales: 'Cajero'
+    store_sales: 'Cajero',
+    karey_inventory: 'Inv. Jabas Karey'
   };
 
   return (
@@ -85,7 +86,7 @@ export function ProfilePage({ profile, onUpdate, effectiveRole, setCurrentPage, 
             </label>
             {profile.role === 'admin' ? (
               <div className="flex flex-wrap gap-2">
-                {(['admin', 'client', 'company', 'dispatcher', 'preparer', 'loader', 'store_sales', 'driver'] as const).map((v) => (
+                {(['admin', 'client', 'company', 'dispatcher', 'preparer', 'loader', 'store_sales', 'driver', 'inventory', 'karey_inventory'] as const).map((v) => (
                   <button
                     key={v}
                     onClick={() => {

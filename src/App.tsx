@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, doc, getDoc, getDocs, setDoc, onSnapshot, query, where, orderBy, addDoc, updateDoc, serverTimestamp, getDocFromServer, deleteDoc, deleteField, limit, startAfter, QuerySnapshot, DocumentData, QueryDocumentSnapshot, Unsubscribe } from 'firebase/firestore';
 import { auth, db, storage, sRef, uploadBytes, getDownloadURL, deleteObject, uploadImage, signInWithGoogle, logout, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, updateProfile } from './firebase';
-import { Product, UserProfile, Order, Page, OrderItem, InventoryRequest, AppNotification, AppSettings, Category, Return, DeliveryRoute, ToastType, UserRole, ReturnSubmitPayload } from './types';
+import { Product, UserProfile, Order, Page, OrderItem, InventoryRequest, AppNotification, AppSettings, Category, Return, DeliveryRoute, ToastType, UserRole, ReturnSubmitPayload, Unit, ContainerMovement } from './types';
 import { CATEGORIES, INITIAL_PRODUCTS, COLORS, JABA_CONFIG } from './constants';
 import { DEFAULT_TENANT_CONFIG, resolveTenantConfig } from './config/tenant';
-import { Search, ShoppingCart, Home as HomeIcon, ClipboardList, History, User as UserIcon, Plus, Minus, ChevronRight, MapPin, CreditCard, CheckCircle2, Loader2, LogOut, Package, Users, ArrowLeft, X, Settings, ShieldCheck, Edit, Check, Bell, AlertTriangle, Trash2, CheckCircle, Truck, Phone, FileText, Image, Tags, Printer, ChevronDown, ChevronUp, Banknote, Mail, Locate, Navigation, Camera, RotateCcw, Calendar, Info, PackageCheck, PackageOpen, Clock, Download, ExternalLink, Store, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { Search, ShoppingCart, Home as HomeIcon, ClipboardList, History, User as UserIcon, Plus, Minus, ChevronRight, MapPin, CreditCard, CheckCircle2, Loader2, LogOut, Package, Users, ArrowLeft, X, Settings, ShieldCheck, Edit, Check, Bell, AlertTriangle, Trash2, CheckCircle, Truck, Phone, FileText, Image, Tags, Printer, ChevronDown, ChevronUp, Banknote, Mail, Locate, Navigation, Camera, RotateCcw, Calendar, Info, PackageCheck, PackageOpen, Clock, Download, ExternalLink, Store, Eye, EyeOff, RefreshCw, Box } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
 import { motion, AnimatePresence } from 'motion/react';
@@ -28,8 +28,16 @@ import {
   AdminNotificationsView,
   AdminOrdersView,
   AdminReturnsView,
-  AdminActivityView
+  AdminActivityView,
+  AdminUnitsView
 } from './views/admin';
+import {
+  KareyDashboard,
+  KareyMovementForm,
+  KareyReturnForm,
+  KareyTransferForm,
+  KareyDriverBalances
+} from './views/karey';
 import { DriverView } from './views/driver/DriverView';
 import { DispatcherView } from './views/dispatcher/DispatcherView';
 import { LoaderView } from './views/loader/LoaderView';
@@ -190,6 +198,8 @@ export default function App() {
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]); // For admin
   const [allRoutes, setAllRoutes] = useState<DeliveryRoute[]>([]); // For dispatcher/loader
   const [allReturns, setAllReturns] = useState<Return[]>([]); // For admin
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [containerMovements, setContainerMovements] = useState<ContainerMovement[]>([]);
   const [products, setProducts] = useState<Product[]>(() => {
     try {
       const cached = localStorage.getItem('dibapasa_cached_products');
@@ -284,6 +294,7 @@ export default function App() {
           else if (savedViewAs === 'loader') setCurrentPage('loader-view');
           else if (savedViewAs === 'store_sales') setCurrentPage('store-sales-view');
           else if (savedViewAs === 'inventory') setCurrentPage('admin-inventory-tracking');
+          else if (savedViewAs === 'karey_inventory') setCurrentPage('karey-dashboard');
           else setCurrentPage('admin-dashboard');
         }
         else if (data.role === 'dispatcher') setCurrentPage('dispatcher-view');
@@ -292,6 +303,7 @@ export default function App() {
         else if (data.role === 'loader') setCurrentPage('loader-view');
         else if (data.role === 'store_sales') setCurrentPage('store-sales-view');
         else if (data.role === 'inventory') setCurrentPage('admin-inventory-tracking');
+        else if (data.role === 'karey_inventory') setCurrentPage('karey-dashboard');
         else setCurrentPage('home');
       } else {
         // New user without profile document
@@ -541,7 +553,7 @@ export default function App() {
       }
     }
 
-    if (profile.role === 'admin' || profile.role === 'loader') {
+    if (profile.role === 'admin' || profile.role === 'loader' || profile.role === 'karey_inventory' || profile.role === 'dispatcher') {
       try {
         const usersSnap = await getDocs(usersQuery);
         setAllUsers(usersSnap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
@@ -640,17 +652,34 @@ export default function App() {
       }, (error) => handleFirestoreError(error, OperationType.GET, 'orders'));
     }
 
-    if (profile.role === 'driver' || profile.role === 'admin' || profile.role === 'dispatcher') {
+    if (profile.role === 'driver' || profile.role === 'admin' || profile.role === 'dispatcher' || profile.role === 'karey_inventory' || profile.role === 'loader') {
       const routesQuery = query(collection(db, 'routes'), orderBy('createdAt', 'desc'), limit(50));
       routesUnsubscribe = onSnapshot(routesQuery, (snapshot) => {
         setAllRoutes(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as DeliveryRoute)));
       }, (error) => handleFirestoreError(error, OperationType.GET, 'routes'));
     }
 
+    // Units listener
+    let unitsUnsubscribe: Unsubscribe | null = null;
+    let movementsUnsubscribe: Unsubscribe | null = null;
+    if (profile.role === 'admin' || profile.role === 'karey_inventory' || profile.role === 'loader' || profile.role === 'dispatcher' || profile.role === 'driver') {
+      const unitsQuery = query(collection(db, 'units'), orderBy('number', 'asc'));
+      unitsUnsubscribe = onSnapshot(unitsQuery, (snapshot) => {
+        setUnits(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Unit)));
+      }, (err) => console.warn("Units listener warning:", err));
+
+      const movementsQuery = query(collection(db, 'containerMovements'), orderBy('exitTime', 'desc'), limit(100));
+      movementsUnsubscribe = onSnapshot(movementsQuery, (snapshot) => {
+        setContainerMovements(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ContainerMovement)));
+      }, (err) => console.warn("Movements listener warning:", err));
+    }
+
     return () => {
       notificationsUnsubscribe();
       if (adminOrdersUnsubscribe) adminOrdersUnsubscribe();
       if (routesUnsubscribe) routesUnsubscribe();
+      if (unitsUnsubscribe) unitsUnsubscribe();
+      if (movementsUnsubscribe) movementsUnsubscribe();
     };
   }, [user, profile]);
 
@@ -1598,6 +1627,8 @@ export default function App() {
               onReturnsClick={() => setCurrentPage('admin-returns')}
               onDriverRouteClick={() => setCurrentPage('driver-view')}
               onActivityClick={() => setCurrentPage('admin-activity')}
+              onUnitsClick={() => setCurrentPage('admin-units')}
+              onKareyControlClick={() => setCurrentPage('karey-dashboard')}
               onSettingsClick={() => setCurrentPage('admin-settings')}
               onProductsClick={() => setCurrentPage('inventory-view')}
               onCategoriesClick={() => setCurrentPage('admin-categories')}
@@ -1607,6 +1638,97 @@ export default function App() {
                 showToast('Datos actualizados', 'success');
               }}
               onSeedData={seedAppData}
+            />
+          )}
+
+          {currentPage === 'admin-units' && (
+            <AdminUnitsView 
+              units={units}
+              onBack={() => setCurrentPage('admin-dashboard')}
+              showToast={showToast}
+              onUnitSaved={(savedUnit) => {
+                setUnits(prev => {
+                  const idx = prev.findIndex(u => u.id === savedUnit.id);
+                  if (idx >= 0) {
+                    const copy = [...prev];
+                    copy[idx] = savedUnit;
+                    return copy;
+                  }
+                  return [...prev, savedUnit];
+                });
+              }}
+              onUnitDeleted={(id) => {
+                setUnits(prev => prev.filter(u => u.id !== id));
+              }}
+            />
+          )}
+
+          {currentPage === 'karey-dashboard' && (
+            <KareyDashboard 
+              units={units}
+              movements={containerMovements}
+              drivers={allUsers.filter(u => u.role === 'driver')}
+              appSettings={settings || undefined}
+              onNavigate={(page) => setCurrentPage(page as Page)}
+              onRefresh={async () => {
+                await loadAuthenticatedData();
+                showToast('Datos actualizados', 'success');
+              }}
+              showToast={showToast}
+            />
+          )}
+
+          {currentPage === 'karey-movement' && profile && (
+            <KareyMovementForm 
+              units={units}
+              drivers={allUsers.filter(u => u.role === 'driver')}
+              routes={allRoutes}
+              currentUser={profile}
+              onBack={() => setCurrentPage('karey-dashboard')}
+              onMovementCreated={() => {
+                showToast('Salida registrada con éxito', 'success');
+                setCurrentPage('karey-dashboard');
+              }}
+              showToast={showToast}
+            />
+          )}
+
+          {currentPage === 'karey-return' && profile && (
+            <KareyReturnForm 
+              units={units}
+              movements={containerMovements}
+              currentUser={profile}
+              appSettings={settings || undefined}
+              onBack={() => setCurrentPage('karey-dashboard')}
+              onReturnReconciled={() => {
+                showToast('Recepción registrada con éxito', 'success');
+                setCurrentPage('karey-dashboard');
+              }}
+              showToast={showToast}
+            />
+          )}
+
+          {currentPage === 'karey-transfer' && profile && (
+            <KareyTransferForm 
+              units={units}
+              drivers={allUsers.filter(u => u.role === 'driver')}
+              currentUser={profile}
+              onBack={() => setCurrentPage('karey-dashboard')}
+              onTransferComplete={() => {
+                showToast('Traspaso registrado con éxito', 'success');
+                setCurrentPage('karey-dashboard');
+              }}
+              showToast={showToast}
+            />
+          )}
+
+          {currentPage === 'karey-balances' && (
+            <KareyDriverBalances 
+              drivers={allUsers.filter(u => u.role === 'driver')}
+              movements={containerMovements}
+              appSettings={settings || undefined}
+              onBack={() => setCurrentPage('karey-dashboard')}
+              showToast={showToast}
             />
           )}
 
@@ -2022,6 +2144,13 @@ export default function App() {
             <>
               <NavButton active={currentPage === 'dispatcher-view'} icon={Package} label="Despacho" onClick={() => setCurrentPage('dispatcher-view')} />
               <NavButton active={currentPage === 'dispatcher-history'} icon={History} label="Historial" onClick={() => setCurrentPage('dispatcher-history')} />
+              <NavButton active={currentPage === 'profile'} icon={UserIcon} label="Perfil" onClick={() => setCurrentPage('profile')} />
+            </>
+          ) : effectiveRole === 'karey_inventory' ? (
+            <>
+              <NavButton active={currentPage === 'karey-dashboard'} icon={Box} label="Jabas Karey" onClick={() => setCurrentPage('karey-dashboard')} />
+              <NavButton active={currentPage === 'karey-movement'} icon={Truck} label="Salida" onClick={() => setCurrentPage('karey-movement')} />
+              <NavButton active={currentPage === 'karey-return'} icon={RotateCcw} label="Recepción" onClick={() => setCurrentPage('karey-return')} />
               <NavButton active={currentPage === 'profile'} icon={UserIcon} label="Perfil" onClick={() => setCurrentPage('profile')} />
             </>
           ) : effectiveRole === 'inventory' ? (

@@ -49,7 +49,8 @@ export function LoaderView({
   const [orderNotes, setOrderNotes] = useState<string>('');
 
   // Embedded Vale Digital state inside modal
-  const [jabasCount, setJabasCount] = useState<number>(1);
+  const [jvCount, setJvCount] = useState<number>(0);
+  const [jnCount, setJnCount] = useState<number>(0);
   const [jabasNotes, setJabasNotes] = useState<string>('');
 
   const rawDisplayed = initialTab === 'pending' ? sortOrdersByWindowAndDistance(pendingOrders) : historyOrders;
@@ -108,7 +109,8 @@ export function LoaderView({
       setItemComments(initialComments);
       setCheckedItems(initialChecks);
       setOrderNotes(selectedOrder.notes || '');
-      setJabasCount(Math.max(1, jabaItemsCount));
+      setJvCount(jabaItemsCount > 0 ? jabaItemsCount : 1);
+      setJnCount(0);
       setJabasNotes('');
     } else {
       setLoaderWeights({});
@@ -274,7 +276,8 @@ export function LoaderView({
       await updateDoc(doc(db, 'orders', order.id), updateData);
 
       // If jabas were loaded, register or update the container vale in the route document
-      if (hasJabaInOrder && jabasCount > 0) {
+      const totalJabasCount = (jvCount || 0) + (jnCount || 0);
+      if (hasJabaInOrder && totalJabasCount > 0) {
         let containerUnitCost = 150;
         try {
           const settingsSnap = await getDoc(doc(db, 'settings', 'general'));
@@ -285,19 +288,20 @@ export function LoaderView({
           // ignore
         }
 
-        const existingQty = route.containerVale?.qtyOut || 0;
-        const totalOut = existingQty + jabasCount;
+        const existingJv = route.containerVale?.jvOut || 0;
+        const existingJn = route.containerVale?.jnOut || 0;
+        const totalJvOut = existingJv + (jvCount || 0);
+        const totalJnOut = existingJn + (jnCount || 0);
 
         await updateDoc(doc(db, 'routes', route.id), {
           status: 'in_progress',
           containerVale: {
-            qtyOut: totalOut,
+            jvOut: totalJvOut,
+            jnOut: totalJnOut,
             qtyOutBy: profile.uid,
             qtyOutByName: profile.name,
             qtyOutAt: serverTimestamp(),
-            unitCost: containerUnitCost,
-            status: 'open',
-            notes: jabasNotes ? jabasNotes : (route.containerVale?.notes || '')
+            unitCost: containerUnitCost
           }
         });
       }
@@ -321,7 +325,7 @@ export function LoaderView({
       });
 
       setSelectedOrderId(null);
-      showToast(hasJabaInOrder ? `Pedido cargado y vale de ${jabasCount} jaba(s) registrado` : "Pedido cargado exitosamente en unidad", 'success');
+      showToast(hasJabaInOrder ? `Pedido cargado y vale de ${totalJabasCount} jaba(s) (${jvCount} JV / ${jnCount} JN) registrado` : "Pedido cargado exitosamente en unidad", 'success');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
     }
@@ -795,41 +799,72 @@ export function LoaderView({
                           Vale Digital de Salida de Jabas (Karey)
                         </h4>
                         <p className="text-[10px] text-amber-800">
-                          Responsabilidad de contenedores retornables asignada a la unidad
+                          Conteo de Jabas Verdes (JV) y Negras (JN) asignadas a la unidad
                         </p>
                       </div>
                     </div>
                     <span className="text-[10px] bg-amber-200 text-amber-950 font-black px-2.5 py-1 rounded-full border border-amber-300">
-                      {jabasCount} {jabasCount === 1 ? 'Jaba' : 'Jabas'}
+                      Total: {(jvCount || 0) + (jnCount || 0)} Pzas
                     </span>
                   </div>
 
                   {(initialTab === 'pending' || isEditing) ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-amber-200/80">
-                        <span className="text-xs font-bold text-gray-700">Jabas físicas a cargar en la unidad:</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setJabasCount(Math.max(1, jabasCount - 1))}
-                            className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 font-black text-sm text-gray-700 transition-colors"
-                          >
-                            -
-                          </button>
-                          <span className="w-8 text-center font-black text-amber-950 text-base">{jabasCount}</span>
-                          <button
-                            type="button"
-                            onClick={() => setJabasCount(jabasCount + 1)}
-                            className="w-8 h-8 rounded-lg bg-amber-600 hover:bg-amber-700 font-black text-sm text-white transition-colors"
-                          >
-                            +
-                          </button>
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Green Crates (JV) */}
+                        <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-emerald-900">Verdes (JV)</span>
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                          </div>
+                          <div className="flex items-center justify-between bg-white p-1.5 rounded-lg border border-emerald-200">
+                            <button
+                              type="button"
+                              onClick={() => setJvCount(Math.max(0, jvCount - 1))}
+                              className="w-7 h-7 rounded bg-gray-100 hover:bg-gray-200 font-bold text-xs text-gray-700"
+                            >
+                              -
+                            </button>
+                            <span className="font-black text-emerald-900 text-sm">{jvCount}</span>
+                            <button
+                              type="button"
+                              onClick={() => setJvCount(jvCount + 1)}
+                              className="w-7 h-7 rounded bg-emerald-600 hover:bg-emerald-700 font-bold text-xs text-white"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Black Crates (JN) */}
+                        <div className="bg-gray-100 p-3 rounded-xl border border-gray-300 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-gray-900">Negras (JN)</span>
+                            <span className="w-2.5 h-2.5 rounded-full bg-gray-900" />
+                          </div>
+                          <div className="flex items-center justify-between bg-white p-1.5 rounded-lg border border-gray-200">
+                            <button
+                              type="button"
+                              onClick={() => setJnCount(Math.max(0, jnCount - 1))}
+                              className="w-7 h-7 rounded bg-gray-100 hover:bg-gray-200 font-bold text-xs text-gray-700"
+                            >
+                              -
+                            </button>
+                            <span className="font-black text-gray-900 text-sm">{jnCount}</span>
+                            <button
+                              type="button"
+                              onClick={() => setJnCount(jnCount + 1)}
+                              className="w-7 h-7 rounded bg-gray-900 hover:bg-gray-800 font-bold text-xs text-white"
+                            >
+                              +
+                            </button>
+                          </div>
                         </div>
                       </div>
 
                       <input 
                         type="text"
-                        placeholder="Observaciones del vale (ej: Jabas azules limpias)..."
+                        placeholder="Observaciones del vale de salida..."
                         value={jabasNotes}
                         onChange={(e) => setJabasNotes(e.target.value)}
                         className="w-full text-xs px-3 py-2 bg-white border border-amber-200 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -837,8 +872,10 @@ export function LoaderView({
                     </div>
                   ) : (
                     <div className="bg-white p-2.5 rounded-xl border border-amber-200/60 text-xs flex justify-between items-center text-amber-900">
-                      <span>Jabas amparadas en el vale de salida:</span>
-                      <span className="font-black text-sm">{jabasCount} unidades</span>
+                      <span>Jabas amparadas en el vale:</span>
+                      <span className="font-black text-sm">
+                        <span className="text-emerald-700">{jvCount} JV</span> / <span className="text-gray-900">{jnCount} JN</span>
+                      </span>
                     </div>
                   )}
                 </div>

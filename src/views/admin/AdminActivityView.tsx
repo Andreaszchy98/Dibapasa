@@ -1,5 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { 
   ChevronRight, 
   ChevronDown,
@@ -26,7 +28,7 @@ import {
   Box,
   UserCheck
 } from 'lucide-react';
-import { Order, DeliveryRoute, UserProfile, Return } from '../../types';
+import { Order, DeliveryRoute, UserProfile, Return, ContainerMovement } from '../../types';
 import { cn } from '../../components/ui';
 
 function toJsDate(ts: unknown): Date | null {
@@ -185,6 +187,19 @@ export function AdminActivityView({
   // Filter states for jabas
   const [jabaFilterStatus, setJabaFilterStatus] = useState<'all' | 'shortage' | 'reconciled' | 'open'>('all');
   const [jabaSearchTerm, setJabaSearchTerm] = useState('');
+  const [containerMovements, setContainerMovements] = useState<ContainerMovement[]>([]);
+
+  useEffect(() => {
+    const q = query(collection(db, 'containerMovements'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      const docs: ContainerMovement[] = [];
+      snap.forEach((d) => docs.push({ id: d.id, ...d.data() } as ContainerMovement));
+      setContainerMovements(docs);
+    }, (err) => {
+      console.warn("Could not load container movements in admin view:", err);
+    });
+    return () => unsub();
+  }, []);
 
   // Lookup maps
   const userMap = useMemo(() => {
@@ -398,13 +413,26 @@ export function AdminActivityView({
     let totalReturned = 0;
     let totalShortage = 0;
     let totalDebt = 0;
-    let shortageRoutesCount = 0;
+    let shortageCount = 0;
 
+    // From ContainerMovements (Karey Module)
+    containerMovements.forEach(m => {
+      totalOut += (m.jvOut || 0) + (m.jnOut || 0);
+      totalReturned += (m.jvIn || 0) + (m.jnIn || 0);
+      const shortage = (m.jvShortage || 0) + (m.jnShortage || 0);
+      if (shortage > 0) {
+        totalShortage += shortage;
+        totalDebt += (m.payrollDeductionAmount || 0);
+        shortageCount++;
+      }
+    });
+
+    // Plus route container vales if any not in movements
     jabaRoutes.forEach(r => {
       const vale = r.containerVale;
-      if (vale) {
-        const qOut = vale.qtyOut || 0;
-        const qRet = vale.qtyReturned || 0;
+      if (vale && containerMovements.length === 0) {
+        const qOut = (vale.jvOut || 0) + (vale.jnOut || 0) || vale.qtyOut || 0;
+        const qRet = (vale.jvReturned || 0) + (vale.jnReturned || 0) || vale.qtyReturned || 0;
         const shortage = Math.max(0, qOut - qRet);
         const unitCost = vale.unitCost || 150;
 
@@ -415,20 +443,20 @@ export function AdminActivityView({
         if (vale.status === 'shortage' || (vale.status === 'reconciled' && shortage > 0)) {
           totalShortage += shortage;
           totalDebt += shortage * unitCost;
-          shortageRoutesCount++;
+          shortageCount++;
         }
       }
     });
 
     return {
-      totalVales: jabaRoutes.length,
+      totalVales: containerMovements.length > 0 ? containerMovements.length : jabaRoutes.length,
       totalOut,
       totalReturned,
       totalShortage,
       totalDebt,
-      shortageRoutesCount
+      shortageCount
     };
-  }, [jabaRoutes]);
+  }, [jabaRoutes, containerMovements]);
 
   const hasActiveFilters = 
     searchTerm !== '' || 
@@ -500,7 +528,7 @@ export function AdminActivityView({
             )}
           >
             <Box className="w-4 h-4 text-amber-600" />
-            <span>Vales de Jabas {jabaMetrics.shortageRoutesCount > 0 && <span className="bg-red-500 text-white text-[9px] px-1.5 py-0.2 rounded-full">{jabaMetrics.shortageRoutesCount}</span>}</span>
+            <span>Vales de Jabas {jabaMetrics.shortageCount > 0 && <span className="bg-red-500 text-white text-[9px] px-1.5 py-0.2 rounded-full">{jabaMetrics.shortageCount}</span>}</span>
           </button>
         </div>
       </div>
@@ -1213,6 +1241,16 @@ export function AdminActivityView({
                       <div>
                         <span className="text-gray-400 text-[10px] uppercase font-bold block">Salida de Bodega:</span>
                         <span className="text-base font-black text-amber-900">{qtyOut} Jabas</span>
+                        {(vale.jvOut !== undefined || vale.jnOut !== undefined) && (
+                          <div className="flex gap-1.5 my-1">
+                            <span className="bg-emerald-50 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-200">
+                              JV: {vale.jvOut || 0}
+                            </span>
+                            <span className="bg-gray-800 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                              JN: {vale.jnOut || 0}
+                            </span>
+                          </div>
+                        )}
                         <span className="text-[10px] text-gray-500 block">Cargó: <strong>{vale.qtyOutByName || 'Cargador'}</strong></span>
                         <span className="text-[9px] text-gray-400 block">{formatDateTime(vale.qtyOutAt)}</span>
                       </div>
@@ -1221,6 +1259,16 @@ export function AdminActivityView({
                         <span className="text-base font-black text-gray-900">
                           {vale.qtyReturned !== undefined ? `${qtyReturned} Jabas` : 'Pendiente de retorno'}
                         </span>
+                        {(vale.jvReturned !== undefined || vale.jnReturned !== undefined) && (
+                          <div className="flex gap-1.5 my-1">
+                            <span className="bg-emerald-50 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-200">
+                              JV: {vale.jvReturned || 0}
+                            </span>
+                            <span className="bg-gray-800 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                              JN: {vale.jnReturned || 0}
+                            </span>
+                          </div>
+                        )}
                         {vale.qtyReturnedByName && (
                           <span className="text-[10px] text-gray-500 block">Recibió: <strong>{vale.qtyReturnedByName}</strong></span>
                         )}

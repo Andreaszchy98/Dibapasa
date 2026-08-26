@@ -43,6 +43,12 @@ service cloud.firestore {
       return isAdmin() || (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['dispatcher', 'preparer', 'driver', 'loader', 'store_sales', 'inventory']);
     }
 
+    function isKareyInventory() {
+      return isSignedIn() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'karey_inventory';
+    }
+
     function isDispatcher() {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'dispatcher';
     }
@@ -58,8 +64,8 @@ service cloud.firestore {
              (data.keys().size() >= 2 && data.keys().size() <= 15) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
              (!('email' in data) || isValidEmail(data.email)) &&
-             data.role in ['client', 'company', 'admin', 'dispatcher', 'preparer', 'driver', 'loader', 'store_sales', 'inventory'] &&
-             (!('viewAs' in data) || data.viewAs in ['client', 'company', 'admin', 'dispatcher', 'preparer', 'driver', 'loader', 'store_sales', 'inventory']) &&
+             data.role in ['client', 'company', 'admin', 'dispatcher', 'preparer', 'driver', 'loader', 'store_sales', 'inventory', 'karey_inventory'] &&
+             (!('viewAs' in data) || data.viewAs in ['client', 'company', 'admin', 'dispatcher', 'preparer', 'driver', 'loader', 'store_sales', 'inventory', 'karey_inventory']) &&
              (!('phone' in data) || (data.phone is string && data.phone.size() <= 25)) &&
              (!('address' in data) || (data.address is string && data.address.size() <= 500)) &&
              (!('location' in data) || (data.location.lat is number && data.location.lng is number));
@@ -222,6 +228,18 @@ service cloud.firestore {
     match /categories/{categoryId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    match /units/{unitId} {
+      allow read: if isKareyInventory() || isAdmin() || isStaff();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || isKareyInventory();
+    }
+
+    match /containerMovements/{movementId} {
+      allow read: if isKareyInventory() || isAdmin();
+      allow create, update: if isKareyInventory() || isAdmin();
+      allow delete: if isAdmin();
     }
   }
 }

@@ -13,7 +13,8 @@ export type UserRole =
   | 'driver' 
   | 'loader' 
   | 'store_sales' 
-  | 'inventory';
+  | 'inventory'
+  | 'karey_inventory';
 
 export interface Category {
   id: string;
@@ -163,10 +164,14 @@ export interface DeliveryRoute {
   updatedAt: FirestoreTimestamp;
   containerVale?: {
     qtyOut?: number;
+    qtyReturned?: number;
+    jvOut?: number;
+    jnOut?: number;
+    jvReturned?: number;
+    jnReturned?: number;
     qtyOutBy?: string;
     qtyOutByName?: string;
     qtyOutAt?: FirestoreTimestamp;
-    qtyReturned?: number;
     qtyReturnedBy?: string;
     qtyReturnedByName?: string;
     qtyReturnedAt?: FirestoreTimestamp;
@@ -174,6 +179,49 @@ export interface DeliveryRoute {
     status?: 'open' | 'reconciled' | 'shortage';
     notes?: string;
   };
+}
+
+export interface Unit {
+  id: string;
+  number: string;
+  status: 'available' | 'loading' | 'in_route' | 'in_pantano' | 'maintenance';
+  lastDriverId?: string;
+  lastDriverName?: string;
+  lastRouteId?: string;
+  lastRouteName?: string;
+  currentMovementId?: string;
+  jvPending: number;
+  jnPending: number;
+  createdAt?: FirestoreTimestamp;
+  updatedAt?: FirestoreTimestamp;
+}
+
+export interface ContainerMovement {
+  id: string;
+  unitId: string;
+  unitNumber: string;
+  driverId: string;
+  driverName: string;
+  routeId?: string;
+  routeName?: string;
+  folio: string;
+  jvOut: number;
+  jnOut: number;
+  jvIn?: number;
+  jnIn?: number;
+  jvShortage?: number;
+  jnShortage?: number;
+  payrollDeductionAmount?: number;
+  exitTime: FirestoreTimestamp;
+  entryTime?: FirestoreTimestamp;
+  status: 'loading' | 'active' | 'pantano' | 'completed';
+  registeredBy: string;
+  registeredByName: string;
+  reconciledBy?: string;
+  reconciledByName?: string;
+  notes?: string;
+  createdAt?: FirestoreTimestamp;
+  updatedAt?: FirestoreTimestamp;
 }
 
 export interface AppSettings {
@@ -246,5 +294,11 @@ export type Page =
   | 'product-detail' 
   | 'admin-categories' 
   | 'admin-activity' 
+  | 'admin-units'
+  | 'karey-dashboard'
+  | 'karey-movement'
+  | 'karey-return'
+  | 'karey-transfer'
+  | 'karey-balances'
   | 'store-sales-view' 
   | 'store-ticket';

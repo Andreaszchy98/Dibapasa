@@ -16,7 +16,8 @@ const ROLE_LABELS: Record<string, string> = {
   driver: 'Conductor',
   loader: 'Cargador',
   store_sales: 'Cajero',
-  inventory: 'Inventarios'
+  inventory: 'Inventarios',
+  karey_inventory: 'Inv. Jabas Karey'
 };
 
 export function AdminUsersView({ users, onBack, onRefresh }: { users: UserProfile[]; onBack: () => void; onRefresh?: () => void }) {
@@ -114,7 +115,7 @@ export function AdminUsersView({ users, onBack, onRefresh }: { users: UserProfil
                 <div className="space-y-2">
                   <p className="text-xs text-gray-400 font-bold uppercase ml-1">Asignar Rol</p>
                   <div className="grid grid-cols-2 gap-2">
-                    {(['client', 'company', 'dispatcher', 'preparer', 'driver', 'loader', 'admin', 'store_sales'] as const).map((r) => (
+                    {(['client', 'company', 'dispatcher', 'preparer', 'driver', 'loader', 'store_sales', 'inventory', 'karey_inventory', 'admin'] as const).map((r) => (
                       <button
                         key={r}
                         onClick={() => updateUserRole(selectedUser.uid, r)}

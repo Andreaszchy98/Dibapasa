@@ -239,10 +239,10 @@ export function KareyMovementForm({
             className="w-full h-11 px-3 text-sm bg-gray-50 border border-gray-200 rounded-2xl focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
             required
           >
-            <option value="">-- Seleccionar Chofer --</option>
+            <option value="">-- Seleccionar Chofer / Administrador --</option>
             {drivers.map((driver) => (
               <option key={driver.uid} value={driver.uid}>
-                {driver.name} ({driver.email || driver.phone || 'Chofer'})
+                {driver.name} {driver.role === 'admin' ? '• (Administrador)' : `(${driver.email || driver.phone || 'Chofer'})`}
               </option>
             ))}
           </select>

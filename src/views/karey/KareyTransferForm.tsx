@@ -401,10 +401,10 @@ export function KareyTransferForm({
               className="w-full h-11 px-3 text-sm bg-gray-50 border border-gray-200 rounded-2xl focus:bg-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               required
             >
-              <option value="">-- Seleccionar Chofer --</option>
+              <option value="">-- Seleccionar Chofer / Administrador --</option>
               {drivers.map((d) => (
                 <option key={d.uid} value={d.uid}>
-                  {d.name}
+                  {d.name} {d.role === 'admin' ? '• (Administrador)' : ''}
                 </option>
               ))}
             </select>

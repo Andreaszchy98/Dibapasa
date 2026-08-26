@@ -1667,7 +1667,7 @@ export default function App() {
             <KareyDashboard 
               units={units}
               movements={containerMovements}
-              drivers={allUsers.filter(u => u.role === 'driver')}
+              drivers={allUsers.filter(u => u.role === 'driver' || u.role === 'admin')}
               appSettings={settings || undefined}
               onNavigate={(page) => setCurrentPage(page as Page)}
               onRefresh={async () => {
@@ -1682,7 +1682,7 @@ export default function App() {
             <KareyMovementForm 
               units={units}
               movements={containerMovements}
-              drivers={allUsers.filter(u => u.role === 'driver')}
+              drivers={allUsers.filter(u => u.role === 'driver' || u.role === 'admin')}
               routes={allRoutes}
               currentUser={profile}
               onBack={() => setCurrentPage('karey-dashboard')}
@@ -1712,7 +1712,7 @@ export default function App() {
           {currentPage === 'karey-transfer' && profile && (
             <KareyTransferForm 
               units={units}
-              drivers={allUsers.filter(u => u.role === 'driver')}
+              drivers={allUsers.filter(u => u.role === 'driver' || u.role === 'admin')}
               routes={allRoutes}
               orders={allOrders}
               currentUser={profile}
@@ -1726,7 +1726,7 @@ export default function App() {
 
           {currentPage === 'karey-balances' && (
             <KareyDriverBalances 
-              drivers={allUsers.filter(u => u.role === 'driver')}
+              drivers={allUsers.filter(u => u.role === 'driver' || u.role === 'admin')}
               movements={containerMovements}
               appSettings={settings || undefined}
               onBack={() => setCurrentPage('karey-dashboard')}

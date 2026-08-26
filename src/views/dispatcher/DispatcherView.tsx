@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Truck, Plus, Edit, Trash2, Package, X, CheckCircle, Clock, Store, Calendar, ChevronUp, ChevronDown, CreditCard, Banknote, Phone, Mail, MapPin, Box, AlertTriangle } from 'lucide-react';
 import { doc, updateDoc, addDoc, collection, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
 import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order, DeliveryRoute, UserProfile, Product } from '../../types';
+import { Order, DeliveryRoute, UserProfile, Product, Unit } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
 import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
+import { updateRouteUnitAndDriver } from '../../lib/containers';
 
 export function DispatcherView({ 
   orders, 
@@ -15,6 +16,7 @@ export function DispatcherView({
   users, 
   products, 
   profile,
+  units = [],
   onBack: _onBack, 
   showToast,
   initialTab = 'pending'
@@ -24,6 +26,7 @@ export function DispatcherView({
   users: UserProfile[]; 
   products: Product[]; 
   profile: UserProfile;
+  units?: Unit[];
   onBack: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
   initialTab?: 'pending' | 'history'; 
@@ -40,6 +43,19 @@ export function DispatcherView({
   const historyOrders = orders.filter(o => o.status !== 'pending' && o.status !== 'accepted' && o.status !== 'processing' && o.status !== 'ready' && o.status !== 'cancelled').slice(0, 50);
 
   const drivers = users.filter(u => u.role === 'driver' || u.role === 'admin');
+
+  // Filtrar unidades disponibles para el Dispatcher
+  const availableUnits = useMemo(() => {
+    return units.filter(u => {
+      if (editingRouteId) {
+        const currentRoute = routes.find(r => r.id === editingRouteId);
+        if (currentRoute && currentRoute.unitNumber?.trim().toUpperCase() === u.number?.trim().toUpperCase()) {
+          return true;
+        }
+      }
+      return u.status === 'available';
+    });
+  }, [units, editingRouteId, routes]);
 
   const toggleExpand = (id: string) => {
     setExpandedOrders(prev => ({ ...prev, [id]: !prev[id] }));
@@ -81,9 +97,19 @@ export function DispatcherView({
   };
 
   const saveRoute = async () => {
-    if (!newRouteData.name || !newRouteData.unitNumber || !newRouteData.driverId) {
+    if (!newRouteData.name.trim() || !newRouteData.unitNumber.trim() || !newRouteData.driverId) {
       showToast('Por favor completa todos los campos de la ruta', 'error');
       return;
+    }
+
+    // Validar disponibilidad de la unidad
+    const matchedUnit = units.find(u => u.number.trim().toUpperCase() === newRouteData.unitNumber.trim().toUpperCase());
+    if (matchedUnit) {
+      const isCurrentRouteUnit = editingRouteId && routes.find(r => r.id === editingRouteId)?.unitNumber?.trim().toUpperCase() === matchedUnit.number.toUpperCase();
+      if (!isCurrentRouteUnit && matchedUnit.status !== 'available') {
+        showToast(`La unidad #${matchedUnit.number} no está disponible (Estado: ${matchedUnit.status}).`, 'error');
+        return;
+      }
     }
 
     const existingDriverRoute = routes.find(r => 
@@ -99,15 +125,28 @@ export function DispatcherView({
 
     setIsSavingRoute(true);
     try {
+      const selectedDriver = drivers.find(d => d.uid === newRouteData.driverId);
+      const normalizedUnitNumber = newRouteData.unitNumber.trim().toUpperCase();
+
       if (editingRouteId) {
-        await updateDoc(doc(db, 'routes', editingRouteId), {
-          ...newRouteData,
-          updatedAt: serverTimestamp()
-        });
-        showToast('Ruta actualizada con éxito', 'success');
+        const oldRoute = routes.find(r => r.id === editingRouteId);
+        if (oldRoute) {
+          await updateRouteUnitAndDriver({
+            route: oldRoute,
+            newUnitNumber: normalizedUnitNumber,
+            newDriverId: newRouteData.driverId,
+            newDriverName: selectedDriver?.name || 'Chofer Asignado',
+            newRouteName: newRouteData.name,
+            units,
+            operatorProfile: profile
+          });
+        }
+
+        showToast('Ruta y asignación de unidad/vale actualizadas con éxito', 'success');
       } else {
-        await addDoc(collection(db, 'routes'), {
+        const routeDocRef = await addDoc(collection(db, 'routes'), {
           ...newRouteData,
+          unitNumber: normalizedUnitNumber,
           status: 'active',
           orderIds: [],
           assignedBy: profile.uid,
@@ -115,6 +154,18 @@ export function DispatcherView({
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
+
+        if (matchedUnit) {
+          await updateDoc(doc(db, 'units', matchedUnit.id), {
+            status: 'loading',
+            lastDriverId: newRouteData.driverId,
+            lastDriverName: selectedDriver?.name || '',
+            lastRouteId: routeDocRef.id,
+            lastRouteName: newRouteData.name,
+            updatedAt: serverTimestamp()
+          });
+        }
+
         showToast('Ruta creada con éxito', 'success');
       }
       setShowRouteModal(false);
@@ -144,6 +195,16 @@ export function DispatcherView({
     }
 
     try {
+      if (route.unitNumber) {
+        const assignedUnit = units.find(u => u.number.trim().toUpperCase() === route.unitNumber.trim().toUpperCase());
+        if (assignedUnit && (assignedUnit.status === 'loading' || assignedUnit.status === 'in_route')) {
+          await updateDoc(doc(db, 'units', assignedUnit.id), {
+            status: 'available',
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+
       for (const orderId of route.orderIds) {
         await updateDoc(doc(db, 'orders', orderId), {
           routeId: deleteField(),
@@ -511,7 +572,7 @@ export function DispatcherView({
                       )}
 
                       {/* Vale de Jabas Karey Section (Informational Only - Managed by Karey Inventory) */}
-                      {route.containerVale && ((route.containerVale.jvOut || 0) + (route.containerVale.jnOut || 0) + (route.containerVale.qtyOut || 0) > 0) ? (
+                      {route.containerVale && ((route.containerVale.jvOut || 0) + (route.containerVale.jnOut || 0) > 0) ? (
                         <div className="p-3 rounded-xl border border-amber-200 bg-amber-50/80 text-xs space-y-2 mt-2 text-amber-900">
                           <div className="flex items-center justify-between font-bold">
                             <div className="flex items-center gap-1.5">
@@ -527,13 +588,7 @@ export function DispatcherView({
                             <div>
                               <span className="text-gray-500 block text-[10px]">Cargadas en Salida:</span>
                               <span className="font-bold text-amber-950">
-                                {route.containerVale.jvOut !== undefined || route.containerVale.jnOut !== undefined ? (
-                                  <>
-                                    <span className="text-emerald-700">{route.containerVale.jvOut || 0} JV</span> • <span className="text-gray-900">{route.containerVale.jnOut || 0} JN</span>
-                                  </>
-                                ) : (
-                                  `${route.containerVale.qtyOut || 0} pzas`
-                                )}
+                                <span className="text-emerald-700">{route.containerVale.jvOut || 0} JV</span> • <span className="text-gray-900">{route.containerVale.jnOut || 0} JN</span>
                               </span>
                             </div>
                             <span className="text-[10px] text-amber-700 italic">
@@ -817,14 +872,40 @@ export function DispatcherView({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-500 ml-1">Número de Unidad</label>
-                  <input 
-                    type="text"
-                    placeholder="Ej. Unidad 10, Van 04..."
-                    value={newRouteData.unitNumber}
-                    onChange={(e) => setNewRouteData(prev => ({ ...prev, unitNumber: e.target.value }))}
-                    className="w-full bg-gray-50 border-gray-100 border rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-red-500 focus:bg-white transition-all outline-none font-medium"
-                  />
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-gray-500 ml-1">Unidad de Carga (Disponible)</label>
+                    <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                      {availableUnits.length} disponibles
+                    </span>
+                  </div>
+
+                  {availableUnits.length === 0 ? (
+                    <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-800 space-y-1">
+                      <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Sin unidades disponibles</span>
+                      </div>
+                      <p className="text-[11px] text-amber-700 leading-relaxed">
+                        Todas las unidades registradas están ocupadas (en ruta, en carga, en pantano o mantenimiento). Espera a que se concilien o registra una unidad en Administración.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <select 
+                        value={newRouteData.unitNumber}
+                        onChange={(e) => setNewRouteData(prev => ({ ...prev, unitNumber: e.target.value }))}
+                        className="w-full bg-gray-50 border-gray-100 border rounded-2xl px-4 py-3 text-sm focus:ring-2 focus:ring-red-500 focus:bg-white transition-all outline-none font-medium appearance-none"
+                      >
+                        <option value="">Seleccionar unidad disponible...</option>
+                        {availableUnits.map(u => (
+                          <option key={u.id} value={u.number}>
+                            Unidad #{u.number} — Disponible {((u.jvPending || 0) + (u.jnPending || 0)) > 0 ? `(${((u.jvPending || 0) + (u.jnPending || 0))} jabas en balance)` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <Truck className="w-4 h-4 text-gray-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-gray-500 ml-1">Asignar Chófer</label>

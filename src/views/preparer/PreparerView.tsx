@@ -1,19 +1,22 @@
 import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ClipboardList, Clock, Package, X, Check, Edit3, MessageSquare, Box, ShoppingBag, Truck, Calendar, Search } from 'lucide-react';
-import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc, Timestamp } from 'firebase/firestore';
 import { Button, cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order, DeliveryRoute, Product, UserProfile, OrderItem } from '../../types';
+import { Order, DeliveryRoute, Product, UserProfile, OrderItem, Unit } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
 import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
 import { calculateOrderPricing } from '../../lib/orders';
+import { syncRouteContainerMovement, calculateRouteContainerTotals, isJabaPackaging, isGreenJaba, isBlackJaba } from '../../lib/containers';
 
 export function PreparerView({ 
   orders, 
   routes,
   products, 
   profile,
+  units = [],
+  users = [],
   onBack: _onBack, 
   showToast,
   initialTab = 'pending'
@@ -22,6 +25,8 @@ export function PreparerView({
   routes: DeliveryRoute[]; 
   products: Product[]; 
   profile: UserProfile;
+  units?: Unit[];
+  users?: UserProfile[];
   onBack: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
   initialTab?: 'pending' | 'history'; 
@@ -51,10 +56,11 @@ export function PreparerView({
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
   const [itemWeights, setItemWeights] = useState<Record<string, string>>({});
-  const [itemPackaging, setItemPackaging] = useState<Record<string, 'bolsa' | 'jaba'>>({});
+  const [itemPackaging, setItemPackaging] = useState<Record<string, 'bolsa' | 'jaba' | 'jaba_verde' | 'jaba_negra'>>({});
   const [itemComments, setItemComments] = useState<Record<string, string>>({});
   const [orderNotes, setOrderNotes] = useState<string>('');
-  const [jabasCount, setJabasCount] = useState<number>(1);
+  const [jvCount, setJvCount] = useState<number>(0);
+  const [jnCount, setJnCount] = useState<number>(0);
   const [jabasNotes, setJabasNotes] = useState<string>('');
 
   // Check if order has already departed on route
@@ -68,11 +74,12 @@ export function PreparerView({
     setIsEditing(startInEditMode);
     
     const initialWeights: Record<string, string> = {};
-    const initialPkg: Record<string, 'bolsa' | 'jaba'> = {};
+    const initialPkg: Record<string, 'bolsa' | 'jaba' | 'jaba_verde' | 'jaba_negra'> = {};
     const initialComments: Record<string, string> = {};
     const initialChecks: Record<string, boolean> = {};
 
-    let jabaCountEstimate = 0;
+    let greenJabaCount = 0;
+    let blackJabaCount = 0;
 
     order.items.forEach(item => {
       if (item.unit === 'Kg') {
@@ -81,9 +88,18 @@ export function PreparerView({
           initialWeights[item.productId] = weightVal.toString();
         }
       }
-      const pkg = item.packaging || 'bolsa';
+      
+      let pkg: 'bolsa' | 'jaba_verde' | 'jaba_negra' = 'bolsa';
+      if (item.packaging === 'jaba_negra') {
+        pkg = 'jaba_negra';
+        blackJabaCount++;
+      } else if (item.packaging === 'jaba_verde' || item.packaging === 'jaba') {
+        pkg = 'jaba_verde';
+        greenJabaCount++;
+      } else {
+        pkg = 'bolsa';
+      }
       initialPkg[item.productId] = pkg;
-      if (pkg === 'jaba') jabaCountEstimate++;
       
       if (item.comment || item.notes) {
         initialComments[item.productId] = item.comment || item.notes || '';
@@ -100,7 +116,14 @@ export function PreparerView({
     setItemComments(initialComments);
     setCheckedItems(initialChecks);
     setOrderNotes(order.notes || '');
-    setJabasCount(Math.max(1, jabaCountEstimate));
+
+    if (order.jvCount !== undefined || order.jnCount !== undefined) {
+      setJvCount(order.jvCount ?? (greenJabaCount > 0 ? 1 : 0));
+      setJnCount(order.jnCount ?? (blackJabaCount > 0 ? 1 : 0));
+    } else {
+      setJvCount(greenJabaCount > 0 ? 1 : 0);
+      setJnCount(blackJabaCount > 0 ? 1 : 0);
+    }
     setJabasNotes('');
   };
 
@@ -108,10 +131,36 @@ export function PreparerView({
     setCheckedItems(prev => ({ ...prev, [itemName]: !prev[itemName] }));
   };
 
+  const setItemPackagingType = (productId: string, newPkg: 'bolsa' | 'jaba_verde' | 'jaba_negra') => {
+    setItemPackaging(prev => {
+      const updated = {
+        ...prev,
+        [productId]: newPkg
+      };
+
+      const hasGreen = Object.values(updated).some(p => p === 'jaba_verde' || p === 'jaba');
+      const hasBlack = Object.values(updated).some(p => p === 'jaba_negra');
+
+      setJvCount(cur => {
+        if (hasGreen && cur <= 0) return 1;
+        if (!hasGreen) return 0;
+        return cur;
+      });
+
+      setJnCount(cur => {
+        if (hasBlack && cur <= 0) return 1;
+        if (!hasBlack) return 0;
+        return cur;
+      });
+
+      return updated;
+    });
+  };
+
   // Check if any product is set to Jaba
   const hasJabaInOrder = useMemo(() => {
-    return Object.values(itemPackaging).some(pkg => pkg === 'jaba');
-  }, [itemPackaging]);
+    return Object.values(itemPackaging).some(pkg => isJabaPackaging(pkg)) || (jvCount > 0 || jnCount > 0);
+  }, [itemPackaging, jvCount, jnCount]);
 
   // Recalculate preview total based on current weights
   const previewPricing = useMemo(() => {
@@ -144,7 +193,7 @@ export function PreparerView({
           packaging: currentPkg,
           comment: commentVal,
           notes: commentVal,
-          preparerCheckedAt: serverTimestamp(),
+          preparerCheckedAt: Timestamp.now(),
           ...(item.unit === 'Kg' && weightVal !== undefined ? { preparerWeight: weightVal } : {})
         };
       });
@@ -156,6 +205,9 @@ export function PreparerView({
         notes: orderNotes.trim(),
         adjustedTotal: newTotal,
         weightValidated: true,
+        jvCount: jvCount,
+        jnCount: jnCount,
+        hasJaba: hasJabaInOrder,
         updatedAt: serverTimestamp()
       };
 
@@ -168,26 +220,26 @@ export function PreparerView({
 
       await updateDoc(doc(db, 'orders', order.id), updatePayload);
 
-      // If jaba is used and route is assigned, update route container vale if applicable
-      if (hasJabaInOrder && order.routeId) {
+      // If jaba is used and route is assigned, update unified route container vale & unit state
+      if (order.routeId) {
         try {
           const route = routes.find(r => r.id === order.routeId);
           if (route) {
-            let containerUnitCost = 150;
-            const settingsSnap = await getDoc(doc(db, 'settings', 'general'));
-            if (settingsSnap.exists() && settingsSnap.data().containerUnitCost) {
-              containerUnitCost = settingsSnap.data().containerUnitCost;
-            }
-            await updateDoc(doc(db, 'routes', route.id), {
-              containerVale: {
-                qtyOut: Math.max(route.containerVale?.qtyOut || 0, jabasCount),
-                qtyOutBy: profile.uid,
-                qtyOutByName: profile.name,
-                qtyOutAt: serverTimestamp(),
-                unitCost: containerUnitCost,
-                status: 'open',
-                notes: jabasNotes ? jabasNotes : (route.containerVale?.notes || '')
-              }
+            const assignedDriver = users.find(u => u.uid === route.driverId);
+            const { totalJv, totalJn } = calculateRouteContainerTotals(route.id, orders, {
+              id: order.id,
+              jvCount: hasJabaInOrder ? jvCount : 0,
+              jnCount: hasJabaInOrder ? jnCount : 0
+            });
+
+            await syncRouteContainerMovement({
+              route,
+              driver: assignedDriver,
+              units,
+              operatorProfile: profile,
+              jvCount: totalJv,
+              jnCount: totalJn,
+              notes: jabasNotes.trim()
             });
           }
         } catch (e) {
@@ -315,7 +367,9 @@ export function PreparerView({
                 <div className="space-y-3">
                   {sortOrdersByWindowAndDistance(routeOrders).map(order => {
                     const canEdit = !orderHasLeftRoute(order);
-                    const jabaItems = order.items.filter(it => it.packaging === 'jaba').length;
+                    const jabaItems = order.items.filter(it => isJabaPackaging(it.packaging)).length;
+                    const greenJabas = order.items.filter(it => isGreenJaba(it.packaging)).length;
+                    const blackJabas = order.items.filter(it => isBlackJaba(it.packaging)).length;
                     const kgItems = order.items.filter(it => it.unit === 'Kg');
                     const totalKgWeighed = kgItems.reduce((sum, it) => sum + (it.preparerWeight || it.loaderWeight || 0), 0);
 
@@ -374,7 +428,7 @@ export function PreparerView({
                           {jabaItems > 0 ? (
                             <span className="text-orange-800 font-bold bg-orange-50 px-2 py-0.5 rounded-md border border-orange-200 flex items-center gap-1">
                               <Box className="w-3 h-3 text-orange-600" />
-                              {jabaItems} en Jaba
+                              {jabaItems} en Jaba {greenJabas > 0 && blackJabas > 0 ? `(${greenJabas} JV / ${blackJabas} JN)` : greenJabas > 0 ? `(${greenJabas} JV)` : `(${blackJabas} JN)`}
                             </span>
                           ) : (
                             <span className="text-gray-500 font-medium bg-gray-50 px-2 py-0.5 rounded-md flex items-center gap-1">
@@ -583,12 +637,12 @@ export function PreparerView({
                                 {item.unit === 'Kg' ? `$${item.price.toFixed(2)}/Kg` : `$${item.price.toFixed(2)} c/u`}
                               </span>
 
-                              {/* Packaging Badge or Selector */}
+                              {/* Packaging Selector */}
                               {(initialTab === 'pending' || isEditing) ? (
-                                <div className="flex items-center gap-1 bg-gray-100 p-0.5 rounded-lg border border-gray-200" onClick={(e) => e.stopPropagation()}>
+                                <div className="flex items-center gap-1 bg-gray-100/90 p-0.5 rounded-lg border border-gray-200" onClick={(e) => e.stopPropagation()}>
                                   <button
                                     type="button"
-                                    onClick={() => setItemPackaging(prev => ({ ...prev, [item.productId]: 'bolsa' }))}
+                                    onClick={() => setItemPackagingType(item.productId, 'bolsa')}
                                     className={cn(
                                       "px-2 py-0.5 text-[9px] font-bold rounded-md transition-all flex items-center gap-1",
                                       currentPkg === 'bolsa' ? "bg-gray-800 text-white shadow-2xs" : "text-gray-600 hover:text-gray-900"
@@ -598,22 +652,36 @@ export function PreparerView({
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => setItemPackaging(prev => ({ ...prev, [item.productId]: 'jaba' }))}
+                                    onClick={() => setItemPackagingType(item.productId, 'jaba_verde')}
                                     className={cn(
                                       "px-2 py-0.5 text-[9px] font-bold rounded-md transition-all flex items-center gap-1",
-                                      currentPkg === 'jaba' ? "bg-amber-600 text-white shadow-2xs" : "text-gray-600 hover:text-gray-900"
+                                      (currentPkg === 'jaba_verde' || currentPkg === 'jaba') ? "bg-emerald-600 text-white shadow-2xs font-black" : "text-emerald-800 hover:bg-emerald-50"
                                     )}
                                   >
-                                    📦 Jaba
+                                    🟢 Jaba Verde
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setItemPackagingType(item.productId, 'jaba_negra')}
+                                    className={cn(
+                                      "px-2 py-0.5 text-[9px] font-bold rounded-md transition-all flex items-center gap-1",
+                                      currentPkg === 'jaba_negra' ? "bg-gray-950 text-white shadow-2xs ring-1 ring-gray-700 font-black" : "text-gray-800 hover:bg-gray-200"
+                                    )}
+                                  >
+                                    ⚫ Jaba Negra
                                   </button>
                                 </div>
                               ) : (
-                                currentPkg === 'jaba' ? (
-                                  <span className="text-[9px] bg-amber-100 text-amber-900 font-bold px-1.5 py-0.5 rounded border border-amber-200">
-                                    📦 En Jaba Karey
+                                currentPkg === 'jaba_negra' ? (
+                                  <span className="text-[9px] bg-gray-900 text-white font-bold px-2 py-0.5 rounded-md border border-gray-800 flex items-center gap-1">
+                                    ⚫ Jaba Negra (JN)
+                                  </span>
+                                ) : (currentPkg === 'jaba_verde' || currentPkg === 'jaba') ? (
+                                  <span className="text-[9px] bg-emerald-100 text-emerald-900 font-bold px-2 py-0.5 rounded-md border border-emerald-300 flex items-center gap-1">
+                                    🟢 Jaba Verde (JV)
                                   </span>
                                 ) : (
-                                  <span className="text-[9px] bg-gray-100 text-gray-700 font-medium px-1.5 py-0.5 rounded">
+                                  <span className="text-[9px] bg-gray-100 text-gray-700 font-medium px-2 py-0.5 rounded-md border border-gray-200">
                                     🛍️ En Bolsa
                                   </span>
                                 )
@@ -707,35 +775,66 @@ export function PreparerView({
                           Vale Digital de Jabas (Karey)
                         </h4>
                         <p className="text-[10px] text-amber-800">
-                          Control de contenedor retornable embebido en este pedido
+                          Conteo de Jabas Verdes (JV) y Negras (JN) asignadas a la unidad
                         </p>
                       </div>
                     </div>
                     <span className="text-[10px] bg-amber-200 text-amber-950 font-black px-2.5 py-1 rounded-full border border-amber-300">
-                      {jabasCount} {jabasCount === 1 ? 'Jaba' : 'Jabas'}
+                      Total: {(jvCount || 0) + (jnCount || 0)} Pzas
                     </span>
                   </div>
 
                   {(initialTab === 'pending' || isEditing) ? (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-amber-200/80">
-                        <span className="text-xs font-bold text-gray-700">Cantidad de jabas a entregar:</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setJabasCount(Math.max(1, jabasCount - 1))}
-                            className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 font-black text-sm text-gray-700 transition-colors"
-                          >
-                            -
-                          </button>
-                          <span className="w-8 text-center font-black text-amber-950 text-base">{jabasCount}</span>
-                          <button
-                            type="button"
-                            onClick={() => setJabasCount(jabasCount + 1)}
-                            className="w-8 h-8 rounded-lg bg-amber-600 hover:bg-amber-700 font-black text-sm text-white transition-colors"
-                          >
-                            +
-                          </button>
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        {/* Green Crates (JV) */}
+                        <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-emerald-900">Verdes (JV)</span>
+                            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                          </div>
+                          <div className="flex items-center justify-between bg-white p-1.5 rounded-lg border border-emerald-200">
+                            <button
+                              type="button"
+                              onClick={() => setJvCount(Math.max(0, jvCount - 1))}
+                              className="w-7 h-7 rounded bg-gray-100 hover:bg-gray-200 font-bold text-xs text-gray-700"
+                            >
+                              -
+                            </button>
+                            <span className="font-black text-emerald-900 text-sm">{jvCount}</span>
+                            <button
+                              type="button"
+                              onClick={() => setJvCount(jvCount + 1)}
+                              className="w-7 h-7 rounded bg-emerald-600 hover:bg-emerald-700 font-bold text-xs text-white"
+                            >
+                              +
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Black Crates (JN) */}
+                        <div className="bg-gray-100 p-3 rounded-xl border border-gray-300 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-gray-900">Negras (JN)</span>
+                            <span className="w-2.5 h-2.5 rounded-full bg-gray-900" />
+                          </div>
+                          <div className="flex items-center justify-between bg-white p-1.5 rounded-lg border border-gray-200">
+                            <button
+                              type="button"
+                              onClick={() => setJnCount(Math.max(0, jnCount - 1))}
+                              className="w-7 h-7 rounded bg-gray-100 hover:bg-gray-200 font-bold text-xs text-gray-700"
+                            >
+                              -
+                            </button>
+                            <span className="font-black text-gray-900 text-sm">{jnCount}</span>
+                            <button
+                              type="button"
+                              onClick={() => setJnCount(jnCount + 1)}
+                              className="w-7 h-7 rounded bg-gray-900 hover:bg-gray-800 font-bold text-xs text-white"
+                            >
+                              +
+                            </button>
+                          </div>
                         </div>
                       </div>
 
@@ -749,8 +848,10 @@ export function PreparerView({
                     </div>
                   ) : (
                     <div className="bg-white p-2.5 rounded-xl border border-amber-200/60 text-xs flex justify-between items-center text-amber-900">
-                      <span>Jabas registradas en salida:</span>
-                      <span className="font-black text-sm">{jabasCount} unidades</span>
+                      <span>Jabas amparadas en el vale:</span>
+                      <span className="font-black text-sm">
+                        <span className="text-emerald-700">{jvCount} JV</span> / <span className="text-gray-900">{jnCount} JN</span>
+                      </span>
                     </div>
                   )}
                 </div>

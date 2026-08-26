@@ -1,13 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Package, Truck, AlertTriangle, MapPin, Navigation, Clock, X, Check, PackageCheck, Box, ShoppingBag, Edit3, MessageSquare, Search } from 'lucide-react';
-import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc, Timestamp } from 'firebase/firestore';
 import { Button, cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order, DeliveryRoute, UserProfile, Product, OrderItem } from '../../types';
+import { Order, DeliveryRoute, UserProfile, Product, OrderItem, Unit } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
 import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
 import { calculateOrderPricing } from '../../lib/orders';
+import { syncRouteContainerMovement, calculateRouteContainerTotals, isJabaPackaging, isGreenJaba, isBlackJaba } from '../../lib/containers';
 
 export function LoaderView({ 
   orders, 
@@ -15,6 +16,7 @@ export function LoaderView({
   users, 
   products, 
   profile,
+  units = [],
   onBack: _onBack, 
   showToast,
   initialTab = 'pending'
@@ -24,6 +26,7 @@ export function LoaderView({
   users: UserProfile[]; 
   products: Product[]; 
   profile: UserProfile;
+  units?: Unit[];
   onBack: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
   initialTab?: 'pending' | 'history'; 
@@ -44,7 +47,7 @@ export function LoaderView({
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
   const [loaderWeights, setLoaderWeights] = useState<Record<string, string>>({});
-  const [itemPackaging, setItemPackaging] = useState<Record<string, 'bolsa' | 'jaba'>>({});
+  const [itemPackaging, setItemPackaging] = useState<Record<string, 'bolsa' | 'jaba' | 'jaba_verde' | 'jaba_negra'>>({});
   const [itemComments, setItemComments] = useState<Record<string, string>>({});
   const [orderNotes, setOrderNotes] = useState<string>('');
 
@@ -77,11 +80,12 @@ export function LoaderView({
   useEffect(() => {
     if (selectedOrder) {
       const initialWeights: Record<string, string> = {};
-      const initialPkg: Record<string, 'bolsa' | 'jaba'> = {};
+      const initialPkg: Record<string, 'bolsa' | 'jaba' | 'jaba_verde' | 'jaba_negra'> = {};
       const initialComments: Record<string, string> = {};
       const initialChecks: Record<string, boolean> = {};
 
-      let jabaItemsCount = 0;
+      let greenJabaCount = 0;
+      let blackJabaCount = 0;
 
       selectedOrder.items.forEach(item => {
         if (item.unit === 'Kg') {
@@ -91,9 +95,18 @@ export function LoaderView({
             initialWeights[item.productId] = item.preparerWeight.toString();
           }
         }
-        const pkg = item.packaging || 'bolsa';
+        
+        let pkg: 'bolsa' | 'jaba_verde' | 'jaba_negra' = 'bolsa';
+        if (item.packaging === 'jaba_negra') {
+          pkg = 'jaba_negra';
+          blackJabaCount++;
+        } else if (item.packaging === 'jaba_verde' || item.packaging === 'jaba') {
+          pkg = 'jaba_verde';
+          greenJabaCount++;
+        } else {
+          pkg = 'bolsa';
+        }
         initialPkg[item.productId] = pkg;
-        if (pkg === 'jaba') jabaItemsCount++;
 
         if (item.comment || item.notes) {
           initialComments[item.productId] = item.comment || item.notes || '';
@@ -109,8 +122,15 @@ export function LoaderView({
       setItemComments(initialComments);
       setCheckedItems(initialChecks);
       setOrderNotes(selectedOrder.notes || '');
-      setJvCount(jabaItemsCount > 0 ? jabaItemsCount : 1);
-      setJnCount(0);
+
+      // Load accurate counts from order or calculate from items
+      if (selectedOrder.jvCount !== undefined || selectedOrder.jnCount !== undefined) {
+        setJvCount(selectedOrder.jvCount ?? (greenJabaCount > 0 ? 1 : 0));
+        setJnCount(selectedOrder.jnCount ?? (blackJabaCount > 0 ? 1 : 0));
+      } else {
+        setJvCount(greenJabaCount > 0 ? 1 : 0);
+        setJnCount(blackJabaCount > 0 ? 1 : 0);
+      }
       setJabasNotes('');
     } else {
       setLoaderWeights({});
@@ -125,16 +145,35 @@ export function LoaderView({
     setCheckedItems(prev => ({ ...prev, [itemName]: !prev[itemName] }));
   };
 
-  const togglePackaging = (productId: string) => {
-    setItemPackaging(prev => ({
-      ...prev,
-      [productId]: prev[productId] === 'jaba' ? 'bolsa' : 'jaba'
-    }));
+  const setItemPackagingType = (productId: string, newPkg: 'bolsa' | 'jaba_verde' | 'jaba_negra') => {
+    setItemPackaging(prev => {
+      const updated = {
+        ...prev,
+        [productId]: newPkg
+      };
+
+      const hasGreen = Object.values(updated).some(p => p === 'jaba_verde' || p === 'jaba');
+      const hasBlack = Object.values(updated).some(p => p === 'jaba_negra');
+
+      setJvCount(cur => {
+        if (hasGreen && cur <= 0) return 1;
+        if (!hasGreen) return 0;
+        return cur;
+      });
+
+      setJnCount(cur => {
+        if (hasBlack && cur <= 0) return 1;
+        if (!hasBlack) return 0;
+        return cur;
+      });
+
+      return updated;
+    });
   };
 
   const hasJabaInOrder = useMemo(() => {
-    return Object.values(itemPackaging).some(pkg => pkg === 'jaba');
-  }, [itemPackaging]);
+    return Object.values(itemPackaging).some(pkg => isJabaPackaging(pkg)) || (jvCount > 0 || jnCount > 0);
+  }, [itemPackaging, jvCount, jnCount]);
 
   // Recalculate preview pricing
   const previewPricing = useMemo(() => {
@@ -164,7 +203,7 @@ export function LoaderView({
           packaging: currentPkg,
           comment: commentVal,
           notes: commentVal,
-          loaderCheckedAt: serverTimestamp(),
+          loaderCheckedAt: Timestamp.now(),
           ...(item.unit === 'Kg' && weightValue !== undefined ? { loaderWeight: weightValue } : {})
         };
       });
@@ -176,8 +215,34 @@ export function LoaderView({
         notes: orderNotes.trim(),
         adjustedTotal: adjustedTotal,
         weightValidated: true,
+        jvCount: jvCount,
+        jnCount: jnCount,
+        hasJaba: hasJabaInOrder,
         updatedAt: serverTimestamp()
       });
+
+      // Also if order has a route and is already in route/loaded, sync with route vale
+      if (order.routeId) {
+        const route = routes.find(r => r.id === order.routeId);
+        if (route) {
+          const assignedDriver = users.find(u => u.uid === route.driverId);
+          const { totalJv, totalJn } = calculateRouteContainerTotals(route.id, orders, {
+            id: order.id,
+            jvCount: hasJabaInOrder ? jvCount : 0,
+            jnCount: hasJabaInOrder ? jnCount : 0
+          });
+
+          await syncRouteContainerMovement({
+            route,
+            driver: assignedDriver,
+            units,
+            operatorProfile: profile,
+            jvCount: totalJv,
+            jnCount: totalJn,
+            notes: jabasNotes.trim()
+          });
+        }
+      }
 
       setIsEditing(false);
       showToast("Cambios en la carga guardados exitosamente", 'success');
@@ -199,7 +264,7 @@ export function LoaderView({
           packaging: itemPackaging[item.productId] || item.packaging || 'bolsa',
           comment: commentVal,
           notes: commentVal,
-          loaderCheckedAt: serverTimestamp(),
+          loaderCheckedAt: Timestamp.now(),
           ...(item.unit === 'Kg' ? { loaderWeight: weightValue } : {})
         };
       });
@@ -213,6 +278,9 @@ export function LoaderView({
         adjustedTotal: adjustedTotal,
         notes: orderNotes.trim(),
         weightValidated: true,
+        jvCount: jvCount,
+        jnCount: jnCount,
+        hasJaba: hasJabaInOrder,
         updatedAt: serverTimestamp()
       });
       
@@ -253,7 +321,7 @@ export function LoaderView({
           packaging: itemPackaging[item.productId] || item.packaging || 'bolsa',
           comment: commentVal,
           notes: commentVal,
-          loaderCheckedAt: serverTimestamp(),
+          loaderCheckedAt: Timestamp.now(),
           ...(item.unit === 'Kg' ? { loaderWeight: weightValue } : {})
         };
       });
@@ -270,39 +338,31 @@ export function LoaderView({
         notes: orderNotes.trim(),
         adjustedTotal: adjustedTotal,
         weightValidated: hasKgItems ? true : order.weightValidated,
+        jvCount: jvCount,
+        jnCount: jnCount,
+        hasJaba: hasJabaInOrder,
         updatedAt: serverTimestamp()
       };
 
       await updateDoc(doc(db, 'orders', order.id), updateData);
 
-      // If jabas were loaded, register or update the container vale in the route document
-      const totalJabasCount = (jvCount || 0) + (jnCount || 0);
-      if (hasJabaInOrder && totalJabasCount > 0) {
-        let containerUnitCost = 150;
-        try {
-          const settingsSnap = await getDoc(doc(db, 'settings', 'general'));
-          if (settingsSnap.exists() && settingsSnap.data().containerUnitCost) {
-            containerUnitCost = settingsSnap.data().containerUnitCost;
-          }
-        } catch {
-          // ignore
-        }
+      // If jabas were loaded, register or update the unified container vale and unit state
+      const assignedDriver = users.find(u => u.uid === route.driverId);
+      const { totalJv, totalJn } = calculateRouteContainerTotals(route.id, orders, {
+        id: order.id,
+        jvCount: hasJabaInOrder ? jvCount : 0,
+        jnCount: hasJabaInOrder ? jnCount : 0
+      });
 
-        const existingJv = route.containerVale?.jvOut || 0;
-        const existingJn = route.containerVale?.jnOut || 0;
-        const totalJvOut = existingJv + (jvCount || 0);
-        const totalJnOut = existingJn + (jnCount || 0);
-
-        await updateDoc(doc(db, 'routes', route.id), {
-          status: 'in_progress',
-          containerVale: {
-            jvOut: totalJvOut,
-            jnOut: totalJnOut,
-            qtyOutBy: profile.uid,
-            qtyOutByName: profile.name,
-            qtyOutAt: serverTimestamp(),
-            unitCost: containerUnitCost
-          }
+      if (totalJv > 0 || totalJn > 0 || route.containerVale) {
+        await syncRouteContainerMovement({
+          route,
+          driver: assignedDriver,
+          units,
+          operatorProfile: profile,
+          jvCount: totalJv,
+          jnCount: totalJn,
+          notes: jabasNotes.trim()
         });
       }
       
@@ -325,7 +385,8 @@ export function LoaderView({
       });
 
       setSelectedOrderId(null);
-      showToast(hasJabaInOrder ? `Pedido cargado y vale de ${totalJabasCount} jaba(s) (${jvCount} JV / ${jnCount} JN) registrado` : "Pedido cargado exitosamente en unidad", 'success');
+      const totalOrderJabas = (jvCount || 0) + (jnCount || 0);
+      showToast(hasJabaInOrder ? `Pedido cargado y vale de ${totalOrderJabas} jaba(s) (${jvCount} JV / ${jnCount} JN) registrado` : "Pedido cargado exitosamente en unidad", 'success');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
     }
@@ -378,7 +439,9 @@ export function LoaderView({
           displayedOrders.map(order => {
             const route = routes.find(r => r.id === order.routeId);
             const driver = route ? users.find(u => u.uid === route.driverId) : null;
-            const jabaItems = order.items.filter(it => it.packaging === 'jaba').length;
+            const jabaItems = order.items.filter(it => isJabaPackaging(it.packaging)).length;
+            const greenJabas = order.items.filter(it => isGreenJaba(it.packaging)).length;
+            const blackJabas = order.items.filter(it => isBlackJaba(it.packaging)).length;
             const kgItems = order.items.filter(it => it.unit === 'Kg');
             const totalKg = kgItems.reduce((sum, it) => sum + (it.loaderWeight || it.preparerWeight || 0), 0);
             const canEdit = !orderHasDeparted(order);
@@ -455,7 +518,7 @@ export function LoaderView({
                   {jabaItems > 0 ? (
                     <span className="text-orange-800 font-bold bg-orange-50 px-2 py-0.5 rounded-md border border-orange-200 flex items-center gap-1">
                       <Box className="w-3 h-3 text-orange-600" />
-                      {jabaItems} en Jaba
+                      {jabaItems} en Jaba {greenJabas > 0 && blackJabas > 0 ? `(${greenJabas} JV / ${blackJabas} JN)` : greenJabas > 0 ? `(${greenJabas} JV)` : `(${blackJabas} JN)`}
                     </span>
                   ) : (
                     <span className="text-gray-500 font-medium bg-gray-50 px-2 py-0.5 rounded-md flex items-center gap-1">
@@ -676,41 +739,52 @@ export function LoaderView({
                                 {item.unit === 'Kg' ? `$${item.price.toFixed(2)}/Kg` : `$${item.price.toFixed(2)} c/u`}
                               </span>
 
-                              {/* Packaging toggle */}
+                              {/* Packaging Selector */}
                               {(initialTab === 'pending' || isEditing) ? (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    togglePackaging(item.productId);
-                                  }}
-                                  className={cn(
-                                    "text-[10px] font-bold px-2 py-0.5 rounded-lg border flex items-center gap-1 transition-all",
-                                    currentPkg === 'jaba'
-                                      ? "bg-amber-100 text-amber-900 border-amber-300 shadow-2xs"
-                                      : "bg-gray-100 text-gray-700 border-gray-200"
-                                  )}
-                                >
-                                  {currentPkg === 'jaba' ? (
-                                    <>
-                                      <Box className="w-3 h-3 text-amber-700" />
-                                      <span>📦 Jaba Karey</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <ShoppingBag className="w-3 h-3 text-gray-600" />
-                                      <span>🛍️ Bolsa</span>
-                                    </>
-                                  )}
-                                </button>
+                                <div className="flex items-center gap-1 bg-gray-100/90 p-0.5 rounded-lg border border-gray-200" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setItemPackagingType(item.productId, 'bolsa')}
+                                    className={cn(
+                                      "px-2 py-0.5 text-[9px] font-bold rounded-md transition-all flex items-center gap-1",
+                                      currentPkg === 'bolsa' ? "bg-gray-800 text-white shadow-2xs" : "text-gray-600 hover:text-gray-900"
+                                    )}
+                                  >
+                                    🛍️ Bolsa
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setItemPackagingType(item.productId, 'jaba_verde')}
+                                    className={cn(
+                                      "px-2 py-0.5 text-[9px] font-bold rounded-md transition-all flex items-center gap-1",
+                                      (currentPkg === 'jaba_verde' || currentPkg === 'jaba') ? "bg-emerald-600 text-white shadow-2xs font-black" : "text-emerald-800 hover:bg-emerald-50"
+                                    )}
+                                  >
+                                    🟢 Jaba Verde
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setItemPackagingType(item.productId, 'jaba_negra')}
+                                    className={cn(
+                                      "px-2 py-0.5 text-[9px] font-bold rounded-md transition-all flex items-center gap-1",
+                                      currentPkg === 'jaba_negra' ? "bg-gray-950 text-white shadow-2xs ring-1 ring-gray-700 font-black" : "text-gray-800 hover:bg-gray-200"
+                                    )}
+                                  >
+                                    ⚫ Jaba Negra
+                                  </button>
+                                </div>
                               ) : (
-                                currentPkg === 'jaba' ? (
-                                  <span className="text-[9px] bg-amber-100 text-amber-900 font-bold px-1.5 py-0.5 rounded border border-amber-200">
-                                    📦 Jaba Karey
+                                currentPkg === 'jaba_negra' ? (
+                                  <span className="text-[9px] bg-gray-900 text-white font-bold px-2 py-0.5 rounded-md border border-gray-800 flex items-center gap-1">
+                                    ⚫ Jaba Negra (JN)
+                                  </span>
+                                ) : (currentPkg === 'jaba_verde' || currentPkg === 'jaba') ? (
+                                  <span className="text-[9px] bg-emerald-100 text-emerald-900 font-bold px-2 py-0.5 rounded-md border border-emerald-300 flex items-center gap-1">
+                                    🟢 Jaba Verde (JV)
                                   </span>
                                 ) : (
-                                  <span className="text-[9px] bg-gray-100 text-gray-700 font-medium px-1.5 py-0.5 rounded">
-                                    🛍️ Bolsa
+                                  <span className="text-[9px] bg-gray-100 text-gray-700 font-medium px-2 py-0.5 rounded-md border border-gray-200">
+                                    🛍️ En Bolsa
                                   </span>
                                 )
                               )}

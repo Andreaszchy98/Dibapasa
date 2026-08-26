@@ -162,12 +162,14 @@ export function AdminActivityView({
   users,
   routes,
   returns = [],
+  containerMovements: externalMovements,
   onBack
 }: {
   orders: Order[];
   users: UserProfile[];
   routes: DeliveryRoute[];
   returns?: Return[];
+  containerMovements?: ContainerMovement[];
   onBack: () => void;
 }) {
   // Top view tab
@@ -187,19 +189,24 @@ export function AdminActivityView({
   // Filter states for jabas
   const [jabaFilterStatus, setJabaFilterStatus] = useState<'all' | 'shortage' | 'reconciled' | 'open'>('all');
   const [jabaSearchTerm, setJabaSearchTerm] = useState('');
-  const [containerMovements, setContainerMovements] = useState<ContainerMovement[]>([]);
+  const [internalMovements, setInternalMovements] = useState<ContainerMovement[]>([]);
 
   useEffect(() => {
+    if (externalMovements && externalMovements.length > 0) return;
     const q = query(collection(db, 'containerMovements'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, (snap) => {
       const docs: ContainerMovement[] = [];
       snap.forEach((d) => docs.push({ id: d.id, ...d.data() } as ContainerMovement));
-      setContainerMovements(docs);
+      setInternalMovements(docs);
     }, (err) => {
       console.warn("Could not load container movements in admin view:", err);
     });
     return () => unsub();
-  }, []);
+  }, [externalMovements]);
+
+  const containerMovements = useMemo(() => {
+    return (externalMovements && externalMovements.length > 0) ? externalMovements : internalMovements;
+  }, [externalMovements, internalMovements]);
 
   // Lookup maps
   const userMap = useMemo(() => {
@@ -377,36 +384,35 @@ export function AdminActivityView({
     };
   }, [orders, returnsByOrderId]);
 
-  // Routes with container vales
+  // Routes with container vales (for backward compatibility)
   const jabaRoutes = useMemo(() => {
-    return routes.filter(r => r.containerVale && r.containerVale.qtyOut && r.containerVale.qtyOut > 0);
+    return routes.filter(r => r.containerVale && ((r.containerVale.jvOut || 0) + (r.containerVale.jnOut || 0) > 0));
   }, [routes]);
 
-  const filteredJabaRoutes = useMemo(() => {
-    return jabaRoutes.filter(r => {
-      const vale = r.containerVale;
-      if (!vale) return false;
-
-      if (jabaFilterStatus === 'shortage' && vale.status !== 'shortage') return false;
-      if (jabaFilterStatus === 'reconciled' && vale.status !== 'reconciled') return false;
-      if (jabaFilterStatus === 'open' && vale.status !== 'open') return false;
+  // Filtered container movements (source of truth from Karey module)
+  const filteredMovements = useMemo(() => {
+    return containerMovements.filter(m => {
+      const shortage = (m.jvShortage || 0) + (m.jnShortage || 0);
+      if (jabaFilterStatus === 'shortage' && shortage <= 0 && m.status !== 'pantano') return false;
+      if (jabaFilterStatus === 'reconciled' && m.status !== 'completed') return false;
+      if (jabaFilterStatus === 'open' && m.status !== 'active' && m.status !== 'loading' && m.status !== 'pantano') return false;
 
       if (jabaSearchTerm.trim()) {
         const term = jabaSearchTerm.toLowerCase();
-        const routeName = (r.name || '').toLowerCase();
-        const unit = (r.unitNumber || '').toLowerCase();
-        const driverName = (r.driverId ? userMap.get(r.driverId)?.name : '')?.toLowerCase() || '';
-        const loader = (vale.qtyOutByName || '').toLowerCase();
-        const receiver = (vale.qtyReturnedByName || '').toLowerCase();
+        const folio = (m.folio || '').toLowerCase();
+        const unit = (m.unitNumber || '').toLowerCase();
+        const driver = (m.driverName || '').toLowerCase();
+        const reg = (m.registeredByName || '').toLowerCase();
+        const rec = (m.reconciledByName || '').toLowerCase();
 
-        if (!routeName.includes(term) && !unit.includes(term) && !driverName.includes(term) && !loader.includes(term) && !receiver.includes(term)) {
+        if (!folio.includes(term) && !unit.includes(term) && !driver.includes(term) && !reg.includes(term) && !rec.includes(term)) {
           return false;
         }
       }
 
       return true;
     });
-  }, [jabaRoutes, jabaFilterStatus, jabaSearchTerm, userMap]);
+  }, [containerMovements, jabaFilterStatus, jabaSearchTerm]);
 
   const jabaMetrics = useMemo(() => {
     let totalOut = 0;
@@ -428,25 +434,15 @@ export function AdminActivityView({
     });
 
     // Plus route container vales if any not in movements
-    jabaRoutes.forEach(r => {
-      const vale = r.containerVale;
-      if (vale && containerMovements.length === 0) {
-        const qOut = (vale.jvOut || 0) + (vale.jnOut || 0) || vale.qtyOut || 0;
-        const qRet = (vale.jvReturned || 0) + (vale.jnReturned || 0) || vale.qtyReturned || 0;
-        const shortage = Math.max(0, qOut - qRet);
-        const unitCost = vale.unitCost || 150;
-
-        totalOut += qOut;
-        if (vale.qtyReturned !== undefined) {
-          totalReturned += qRet;
+    if (containerMovements.length === 0) {
+      jabaRoutes.forEach(r => {
+        const vale = r.containerVale;
+        if (vale) {
+          const qOut = (vale.jvOut || 0) + (vale.jnOut || 0);
+          totalOut += qOut;
         }
-        if (vale.status === 'shortage' || (vale.status === 'reconciled' && shortage > 0)) {
-          totalShortage += shortage;
-          totalDebt += shortage * unitCost;
-          shortageCount++;
-        }
-      }
-    });
+      });
+    }
 
     return {
       totalVales: containerMovements.length > 0 ? containerMovements.length : jabaRoutes.length,
@@ -456,7 +452,7 @@ export function AdminActivityView({
       totalDebt,
       shortageCount
     };
-  }, [jabaRoutes, containerMovements]);
+  }, [containerMovements, jabaRoutes]);
 
   const hasActiveFilters = 
     searchTerm !== '' || 
@@ -974,11 +970,13 @@ export function AdminActivityView({
                                           <td className="py-2.5 px-2 text-center">
                                             <span className={cn(
                                               "text-[9px] px-2 py-0.5 rounded-full font-bold uppercase",
-                                              item.packaging === 'jaba' 
-                                                ? "bg-amber-100 text-amber-900 border border-amber-200" 
+                                              item.packaging === 'jaba_negra'
+                                                ? "bg-gray-900 text-white border border-gray-800"
+                                                : (item.packaging === 'jaba_verde' || item.packaging === 'jaba')
+                                                ? "bg-emerald-100 text-emerald-900 border border-emerald-300"
                                                 : "bg-blue-50 text-blue-700 border border-blue-100"
                                             )}>
-                                              {item.packaging === 'jaba' ? 'Jaba Karey' : 'Bolsa'}
+                                              {item.packaging === 'jaba_negra' ? '⚫ Jaba Negra' : (item.packaging === 'jaba_verde' || item.packaging === 'jaba') ? '🟢 Jaba Verde' : '🛍️ Bolsa'}
                                             </span>
                                           </td>
                                           <td className="py-2.5 px-2 text-right text-gray-600">
@@ -1174,131 +1172,137 @@ export function AdminActivityView({
                 onChange={(e) => setJabaFilterStatus(e.target.value as any)}
                 className="bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 text-xs font-semibold text-gray-900 outline-none focus:ring-2 focus:ring-amber-500"
               >
-                <option value="all">Todos los vales ({jabaRoutes.length})</option>
-                <option value="shortage">⚠️ Con Faltante / Adeudo</option>
-                <option value="reconciled">✅ Conciliados Completos</option>
-                <option value="open">🚚 Abiertos en Ruta</option>
+                <option value="all">Todos los vales ({containerMovements.length > 0 ? containerMovements.length : jabaRoutes.length})</option>
+                <option value="shortage">⚠️ Con Faltante / Adeudo / Pantano</option>
+                <option value="reconciled">✅ Conciliados / Completados</option>
+                <option value="open">🚚 Abiertos en Ruta / Pantano</option>
               </select>
             </div>
           </div>
 
           {/* List of Jaba Vales */}
-          {filteredJabaRoutes.length === 0 ? (
+          {filteredMovements.length === 0 && jabaRoutes.length === 0 ? (
             <div className="bg-white p-12 rounded-3xl border border-dashed border-gray-200 text-center space-y-3">
               <Box className="w-12 h-12 text-gray-300 mx-auto" />
               <p className="text-sm font-bold text-gray-700">No hay vales de jabas con estos criterios</p>
-              <p className="text-xs text-gray-400">Los vales se generan cuando el cargador confirma la salida de productos en contenedor.</p>
+              <p className="text-xs text-gray-400">Los vales se registran por el empleado de Inventario Karey al despachar y recibir unidades.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredJabaRoutes.map(route => {
-                const vale = route.containerVale!;
-                const driver = route.driverId ? userMap.get(route.driverId) : null;
-                const qtyOut = vale.qtyOut || 0;
-                const qtyReturned = vale.qtyReturned ?? 0;
-                const shortage = Math.max(0, qtyOut - qtyReturned);
-                const unitCost = vale.unitCost || 150;
-                const debt = shortage * unitCost;
+              {filteredMovements.map(mov => {
+                const totalOut = (mov.jvOut || 0) + (mov.jnOut || 0);
+                const totalIn = (mov.jvIn || 0) + (mov.jnIn || 0);
+                const totalShortage = (mov.jvShortage || 0) + (mov.jnShortage || 0);
+                const isShortage = totalShortage > 0;
+                const isPantano = mov.status === 'pantano';
+                const isCompleted = mov.status === 'completed';
 
                 return (
                   <div 
-                    key={route.id}
+                    key={mov.id}
                     className={cn(
                       "bg-white rounded-3xl border p-5 shadow-sm space-y-3.5 transition-all",
-                      vale.status === 'shortage' 
-                        ? "border-red-200 bg-red-50/20" 
-                        : vale.status === 'reconciled'
-                        ? "border-emerald-200 bg-emerald-50/10"
-                        : "border-amber-200 bg-amber-50/10"
+                      isPantano ? "border-rose-300 bg-rose-50/20" :
+                      isShortage ? "border-red-200 bg-red-50/20" :
+                      isCompleted ? "border-emerald-200 bg-emerald-50/10" :
+                      "border-amber-200 bg-amber-50/10"
                     )}
                   >
                     <div className="flex items-start justify-between">
                       <div>
                         <div className="flex items-center gap-2">
-                          <h4 className="font-bold text-gray-900 text-sm">{route.name}</h4>
+                          <h4 className="font-bold text-gray-900 text-sm font-mono">{mov.folio}</h4>
                           <span className="text-[10px] bg-gray-100 text-gray-700 px-2 py-0.5 rounded-md font-bold">
-                            Unidad #{route.unitNumber}
+                            Unidad #{mov.unitNumber}
                           </span>
                         </div>
                         <p className="text-xs text-gray-600 mt-0.5">
-                          <strong>Chofer Responsable:</strong> {driver?.name || 'Asignado'}
+                          <strong>Chofer:</strong> {mov.driverName}
                         </p>
+                        {mov.routeName && (
+                          <p className="text-[11px] text-gray-400">
+                            Ruta: {mov.routeName}
+                          </p>
+                        )}
                       </div>
 
                       <span className={cn(
                         "text-[10px] font-black uppercase px-2.5 py-1 rounded-xl",
-                        vale.status === 'shortage' ? "bg-red-100 text-red-800 border border-red-200" :
-                        vale.status === 'reconciled' ? "bg-emerald-100 text-emerald-800 border border-emerald-200" :
+                        isPantano ? "bg-rose-100 text-rose-800 border border-rose-200" :
+                        isShortage ? "bg-red-100 text-red-800 border border-red-200" :
+                        isCompleted ? "bg-emerald-100 text-emerald-800 border border-emerald-200" :
                         "bg-amber-100 text-amber-800 border border-amber-200"
                       )}>
-                        {vale.status === 'shortage' ? 'Faltante con Adeudo' :
-                         vale.status === 'reconciled' ? 'Conciliado OK' : 'En Ruta (Abierto)'}
+                        {isPantano ? '⚠️ PANTANO' :
+                         isShortage ? `Faltante (${totalShortage})` :
+                         isCompleted ? 'Conciliado OK' : 'En Ruta (Abierto)'}
                       </span>
                     </div>
 
                     {/* Quantities output vs returned */}
                     <div className="grid grid-cols-2 gap-3 p-3 bg-white rounded-2xl border border-gray-100 text-xs">
                       <div>
-                        <span className="text-gray-400 text-[10px] uppercase font-bold block">Salida de Bodega:</span>
-                        <span className="text-base font-black text-amber-900">{qtyOut} Jabas</span>
-                        {(vale.jvOut !== undefined || vale.jnOut !== undefined) && (
-                          <div className="flex gap-1.5 my-1">
-                            <span className="bg-emerald-50 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-200">
-                              JV: {vale.jvOut || 0}
-                            </span>
-                            <span className="bg-gray-800 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
-                              JN: {vale.jnOut || 0}
-                            </span>
-                          </div>
+                        <span className="text-gray-400 text-[10px] uppercase font-bold block">Salida:</span>
+                        <span className="text-base font-black text-amber-900">{totalOut} Jabas</span>
+                        <div className="flex gap-1.5 my-1">
+                          <span className="bg-emerald-50 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-200">
+                            JV: {mov.jvOut || 0}
+                          </span>
+                          <span className="bg-gray-800 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                            JN: {mov.jnOut || 0}
+                          </span>
+                        </div>
+                        {mov.registeredByName && (
+                          <span className="text-[10px] text-gray-500 block">Registró: <strong>{mov.registeredByName}</strong></span>
                         )}
-                        <span className="text-[10px] text-gray-500 block">Cargó: <strong>{vale.qtyOutByName || 'Cargador'}</strong></span>
-                        <span className="text-[9px] text-gray-400 block">{formatDateTime(vale.qtyOutAt)}</span>
+                        <span className="text-[9px] text-gray-400 block">{formatDateTime(mov.exitTime || mov.createdAt)}</span>
                       </div>
+
                       <div>
                         <span className="text-gray-400 text-[10px] uppercase font-bold block">Retorno Físico:</span>
                         <span className="text-base font-black text-gray-900">
-                          {vale.qtyReturned !== undefined ? `${qtyReturned} Jabas` : 'Pendiente de retorno'}
+                          {mov.entryTime ? `${totalIn} Jabas` : isPantano ? 'Cerrado en Pantano' : 'Pendiente'}
                         </span>
-                        {(vale.jvReturned !== undefined || vale.jnReturned !== undefined) && (
+                        {mov.entryTime && (
                           <div className="flex gap-1.5 my-1">
                             <span className="bg-emerald-50 text-emerald-800 text-[10px] font-bold px-1.5 py-0.5 rounded border border-emerald-200">
-                              JV: {vale.jvReturned || 0}
+                              JV: {mov.jvIn || 0}
                             </span>
                             <span className="bg-gray-800 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
-                              JN: {vale.jnReturned || 0}
+                              JN: {mov.jnIn || 0}
                             </span>
                           </div>
                         )}
-                        {vale.qtyReturnedByName && (
-                          <span className="text-[10px] text-gray-500 block">Recibió: <strong>{vale.qtyReturnedByName}</strong></span>
+                        {mov.reconciledByName && (
+                          <span className="text-[10px] text-gray-500 block">Recibió: <strong>{mov.reconciledByName}</strong></span>
                         )}
-                        {vale.qtyReturnedAt && (
-                          <span className="text-[9px] text-gray-400 block">{formatDateTime(vale.qtyReturnedAt)}</span>
+                        {mov.entryTime && (
+                          <span className="text-[9px] text-gray-400 block">{formatDateTime(mov.entryTime)}</span>
                         )}
                       </div>
                     </div>
 
                     {/* Shortage calculation and debt notice */}
-                    {vale.status === 'shortage' && (
+                    {isShortage && (
                       <div className="p-3 bg-red-100/80 rounded-2xl border border-red-200 text-red-900 text-xs space-y-1">
                         <div className="flex justify-between font-bold">
                           <span className="flex items-center gap-1 text-red-800">
                             <AlertTriangle className="w-3.5 h-3.5" />
-                            Salieron {qtyOut}, regresaron {qtyReturned} → Faltan {shortage}
+                            Faltan {totalShortage} jabas ({mov.jvShortage || 0} JV / {mov.jnShortage || 0} JN)
                           </span>
                           <span className="font-black text-sm text-red-900">
-                            -${debt.toFixed(2)} MXN
+                            -${(mov.payrollDeductionAmount || 0).toFixed(2)} MXN
                           </span>
                         </div>
                         <p className="text-[10px] text-red-700">
-                          Costo unitario por jaba Karey: ${unitCost.toFixed(2)} MXN a cargo del chofer.
+                          Faltante registrado para descuento en nómina del chofer.
                         </p>
                       </div>
                     )}
 
-                    {vale.notes && (
+                    {mov.notes && (
                       <div className="text-[11px] text-gray-600 bg-gray-50 p-2.5 rounded-xl border border-gray-100">
-                        <strong>Notas:</strong> {vale.notes}
+                        <strong>Notas:</strong> {mov.notes}
                       </div>
                     )}
                   </div>

@@ -10,16 +10,18 @@ import {
   Check, 
   ArrowRightLeft, 
   FileText,
-  Sparkles
+  RefreshCw
 } from 'lucide-react';
-import { runTransaction, doc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, collection, serverTimestamp, getDoc, updateDoc, setDoc, getDocs, query, where } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Button, Input, cn } from '../../components/ui';
-import { Unit, ContainerMovement, UserProfile, ToastType } from '../../types';
+import { Unit, ContainerMovement, UserProfile, DeliveryRoute, Order, ToastType } from '../../types';
 
 export function KareyTransferForm({
   units,
   drivers,
+  routes = [],
+  orders = [],
   currentUser,
   onBack,
   onTransferComplete,
@@ -27,6 +29,8 @@ export function KareyTransferForm({
 }: {
   units: Unit[];
   drivers: UserProfile[];
+  routes?: DeliveryRoute[];
+  orders?: Order[];
   currentUser: UserProfile;
   onBack: () => void;
   onTransferComplete?: () => void;
@@ -78,6 +82,8 @@ export function KareyTransferForm({
 
   const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
+
     if (!sourceUnitId || !destUnitId || !destDriverId) {
       showToast('Selecciona la unidad origen, destino y chofer receptor', 'error');
       return;
@@ -106,39 +112,73 @@ export function KareyTransferForm({
 
     setIsSaving(true);
     try {
-      await runTransaction(db, async (transaction) => {
-        const sourceDocRef = doc(db, 'units', sourceUnitId);
-        const destDocRef = doc(db, 'units', destUnitId);
+      const sourceDocRef = doc(db, 'units', sourceUnitId);
+      const destDocRef = doc(db, 'units', destUnitId);
 
-        const sourceDoc = await transaction.get(sourceDocRef);
-        const destDoc = await transaction.get(destDocRef);
+      const [sourceDoc, destDoc] = await Promise.all([
+        getDoc(sourceDocRef),
+        getDoc(destDocRef)
+      ]);
 
-        if (!sourceDoc.exists() || !destDoc.exists()) {
-          throw new Error('Una de las unidades no existe en la base de datos');
+      if (!sourceDoc.exists() || !destDoc.exists()) {
+        throw new Error('Una de las unidades no existe en la base de datos');
+      }
+
+      const sourceData = sourceDoc.data() as Unit;
+      const destData = destDoc.data() as Unit;
+
+      const newSourceJv = Math.max(0, (sourceData.jvPending || 0) - jvCount);
+      const newSourceJn = Math.max(0, (sourceData.jnPending || 0) - jnCount);
+      const isSourceEmpty = (newSourceJv + newSourceJn) === 0;
+
+      const newDestJv = (destData.jvPending || 0) + jvCount;
+      const newDestJn = (destData.jnPending || 0) + jnCount;
+
+      // Find active container movement associated with source unit or route
+      let existingSourceMovementDocId: string | null = sourceData.currentMovementId || null;
+      let existingSourceMovementData: ContainerMovement | null = null;
+
+      if (existingSourceMovementDocId) {
+        const movSnap = await getDoc(doc(db, 'containerMovements', existingSourceMovementDocId));
+        if (movSnap.exists()) {
+          existingSourceMovementData = { id: movSnap.id, ...movSnap.data() } as ContainerMovement;
         }
+      }
 
-        const sourceData = sourceDoc.data() as Unit;
-        const destData = destDoc.data() as Unit;
+      if (!existingSourceMovementData) {
+        const qMov = query(
+          collection(db, 'containerMovements'),
+          where('unitNumber', '==', sourceData.number.trim().toUpperCase())
+        );
+        const qSnap = await getDocs(qMov);
+        const activeDoc = qSnap.docs.find(d => ['active', 'loading', 'pantano'].includes(d.data().status));
+        if (activeDoc) {
+          existingSourceMovementDocId = activeDoc.id;
+          existingSourceMovementData = { id: activeDoc.id, ...activeDoc.data() } as ContainerMovement;
+        }
+      }
 
-        const newSourceJv = Math.max(0, (sourceData.jvPending || 0) - jvCount);
-        const newSourceJn = Math.max(0, (sourceData.jnPending || 0) - jnCount);
-        const isSourceEmpty = (newSourceJv + newSourceJn) === 0;
+      const transferNote = `[Traspaso: #${sourceData.number} (${sourceData.lastDriverName || 'N/A'}) -> #${destData.number} (${selectedDestDriver!.name}) - Motivo: ${reason || 'Reasignación operativa'}]`;
 
-        const newDestJv = (destData.jvPending || 0) + jvCount;
-        const newDestJn = (destData.jnPending || 0) + jnCount;
+      let finalMovementId = existingSourceMovementDocId;
 
-        // 1. Update source unit
-        transaction.update(sourceDocRef, {
-          jvPending: newSourceJv,
-          jnPending: newSourceJn,
-          status: isSourceEmpty ? 'available' : sourceData.status,
-          currentMovementId: isSourceEmpty ? null : sourceData.currentMovementId,
+      if (isSourceEmpty && existingSourceMovementData && existingSourceMovementDocId) {
+        // OVERWRITE existing movement: Reassign unit & driver directly without creating duplicate records
+        await updateDoc(doc(db, 'containerMovements', existingSourceMovementDocId), {
+          unitId: destData.id || destUnitId,
+          unitNumber: destData.number,
+          driverId: selectedDestDriver!.uid,
+          driverName: selectedDestDriver!.name,
+          jvOut: jvCount,
+          jnOut: jnCount,
+          notes: existingSourceMovementData.notes ? `${existingSourceMovementData.notes} | ${transferNote}` : transferNote,
           updatedAt: serverTimestamp()
         });
-
-        // 2. Create new movement for dest unit
-        const newMovementRef = doc(collection(db, 'containerMovements'));
-        transaction.set(newMovementRef, {
+      } else if (isSourceEmpty && !existingSourceMovementData) {
+        // If no movement document existed, create one directly for destination
+        const newMovDocRef = doc(collection(db, 'containerMovements'));
+        finalMovementId = newMovDocRef.id;
+        await setDoc(newMovDocRef, {
           unitId: destData.id || destUnitId,
           unitNumber: destData.number,
           driverId: selectedDestDriver!.uid,
@@ -150,28 +190,108 @@ export function KareyTransferForm({
           status: 'active',
           registeredBy: currentUser.uid,
           registeredByName: currentUser.name,
-          notes: `Traspaso desde Unidad ${sourceData.number} (Chofer ant: ${sourceData.lastDriverName || 'N/A'}). Motivo: ${reason || 'Descompostura / Operativo'}`,
+          notes: `Traspaso desde Unidad #${sourceData.number}. Motivo: ${reason || 'Operativo'}`,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
+      } else {
+        // Partial transfer: reduce source movement count and create/update destination movement
+        if (existingSourceMovementData && existingSourceMovementDocId) {
+          await updateDoc(doc(db, 'containerMovements', existingSourceMovementDocId), {
+            jvOut: newSourceJv,
+            jnOut: newSourceJn,
+            notes: existingSourceMovementData.notes ? `${existingSourceMovementData.notes} | [Parcial traspasado a #${destData.number}: ${jvCount} JV / ${jnCount} JN]` : `[Parcial traspasado a #${destData.number}: ${jvCount} JV / ${jnCount} JN]`,
+            updatedAt: serverTimestamp()
+          });
+        }
 
-        // 3. Update dest unit
-        transaction.update(destDocRef, {
-          status: 'in_route',
-          lastDriverId: selectedDestDriver!.uid,
-          lastDriverName: selectedDestDriver!.name,
-          currentMovementId: newMovementRef.id,
-          jvPending: newDestJv,
-          jnPending: newDestJn,
+        const newMovDocRef = doc(collection(db, 'containerMovements'));
+        finalMovementId = newMovDocRef.id;
+        await setDoc(newMovDocRef, {
+          unitId: destData.id || destUnitId,
+          unitNumber: destData.number,
+          driverId: selectedDestDriver!.uid,
+          driverName: selectedDestDriver!.name,
+          folio: transferFolio.trim().toUpperCase(),
+          jvOut: jvCount,
+          jnOut: jnCount,
+          exitTime: serverTimestamp(),
+          status: 'active',
+          registeredBy: currentUser.uid,
+          registeredByName: currentUser.name,
+          notes: `Traspaso parcial desde Unidad #${sourceData.number}. Motivo: ${reason || 'Operativo'}`,
+          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         });
+      }
+
+      // 1. Update source unit
+      await updateDoc(sourceDocRef, {
+        jvPending: newSourceJv,
+        jnPending: newSourceJn,
+        status: isSourceEmpty ? 'available' : sourceData.status,
+        currentMovementId: isSourceEmpty ? null : sourceData.currentMovementId,
+        lastRouteId: isSourceEmpty ? null : sourceData.lastRouteId,
+        lastRouteName: isSourceEmpty ? null : sourceData.lastRouteName,
+        updatedAt: serverTimestamp()
       });
 
-      showToast(`Traspaso ${transferFolio} completado exitosamente`, 'success');
+      // 2. Update dest unit
+      await updateDoc(destDocRef, {
+        status: 'in_route',
+        lastDriverId: selectedDestDriver!.uid,
+        lastDriverName: selectedDestDriver!.name,
+        currentMovementId: finalMovementId,
+        lastRouteId: sourceData.lastRouteId || destData.lastRouteId || null,
+        lastRouteName: sourceData.lastRouteName || destData.lastRouteName || null,
+        jvPending: newDestJv,
+        jnPending: newDestJn,
+        updatedAt: serverTimestamp()
+      });
+
+      // 3. Find and update any active route linked to source unit
+      const activeSourceRoute = routes.find(r => 
+        (r.unitNumber?.trim().toUpperCase() === sourceData.number.trim().toUpperCase() || r.id === sourceData.lastRouteId) &&
+        r.status !== 'completed' && r.status !== 'cancelled'
+      );
+
+      if (activeSourceRoute && isSourceEmpty) {
+        await updateDoc(doc(db, 'routes', activeSourceRoute.id), {
+          unitNumber: destData.number.trim().toUpperCase(),
+          driverId: selectedDestDriver!.uid,
+          assignedByName: selectedDestDriver!.name,
+          containerVale: {
+            jvOut: jvCount,
+            jnOut: jnCount,
+            qtyOutBy: currentUser.uid,
+            qtyOutByName: currentUser.name,
+            qtyOutAt: serverTimestamp(),
+            unitCost: 150
+          },
+          updatedAt: serverTimestamp()
+        });
+
+        // Update all orders assigned to this route with the new driverId
+        if (activeSourceRoute.orderIds && activeSourceRoute.orderIds.length > 0) {
+          for (const orderId of activeSourceRoute.orderIds) {
+            try {
+              await updateDoc(doc(db, 'orders', orderId), {
+                driverId: selectedDestDriver!.uid,
+                updatedAt: serverTimestamp()
+              });
+            } catch (err) {
+              console.warn(`Error updating order ${orderId} on transfer:`, err);
+            }
+          }
+        }
+      }
+
+      showToast(`Traspaso a Unidad #${destData.number} (${selectedDestDriver!.name}) completado con éxito`, 'success');
       if (onTransferComplete) {
         onTransferComplete();
+      } else {
+        onBack();
       }
-      onBack();
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `units_transfer/${sourceUnitId}`);
     } finally {
@@ -194,27 +314,26 @@ export function KareyTransferForm({
 
       <form onSubmit={handleTransfer} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
         {/* Folio */}
-        <div className="bg-purple-50/50 p-4 rounded-2xl border border-purple-100 flex items-center justify-between">
-          <div>
+        <div className="bg-purple-50/60 p-3.5 sm:p-4 rounded-2xl border border-purple-100/80 flex items-center justify-between gap-3 w-full">
+          <div className="min-w-0 flex-1">
             <span className="text-[10px] font-bold uppercase text-purple-800 tracking-wider block">Folio de Traspaso</span>
             <input
               type="text"
               value={transferFolio}
               onChange={(e) => setTransferFolio(e.target.value)}
-              className="font-black text-lg text-purple-900 bg-transparent border-0 p-0 focus:ring-0"
+              className="font-black text-base sm:text-lg text-purple-950 bg-transparent border-0 p-0 focus:ring-0 w-full truncate"
               required
             />
           </div>
-          <Button
+          <button
             type="button"
-            variant="outline"
-            size="sm"
             onClick={() => setTransferFolio(`TRF-${Math.floor(100000 + Math.random() * 900000)}`)}
-            className="text-xs bg-white text-purple-700 border-purple-200"
+            title="Regenerar Folio"
+            className="p-2 text-xs text-purple-700 bg-white/90 hover:bg-white border border-purple-200 rounded-xl hover:text-purple-900 transition-colors flex items-center gap-1.5 shrink-0 shadow-2xs"
           >
-            <Sparkles className="w-3 h-3 mr-1" />
-            Regenerar
-          </Button>
+            <RefreshCw className="w-3.5 h-3.5 text-purple-600" />
+            <span className="hidden sm:inline text-[11px] font-medium">Regenerar</span>
+          </button>
         </div>
 
         {/* 1. Source Unit */}

@@ -1,18 +1,20 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Truck, Plus, Package, Navigation, ArrowLeft, Clock, MapPin, Calendar, Banknote, CreditCard, X, Phone, AlertTriangle, ClipboardList } from 'lucide-react';
-import { doc, updateDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { Truck, Plus, Package, Navigation, ArrowLeft, Clock, MapPin, Calendar, Banknote, CreditCard, X, Phone, AlertTriangle, ClipboardList, ShieldCheck, Box } from 'lucide-react';
+import { doc, updateDoc, addDoc, collection, serverTimestamp, query, where, getDocs } from 'firebase/firestore';
 import { Button, Input, cn } from '../../components/ui';
 import { OSMMap } from '../../components/OSMMap';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order, DeliveryRoute, UserProfile, Product } from '../../types';
+import { Order, DeliveryRoute, UserProfile, Product, Unit } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
+import { getOrderContainerSummary } from '../../lib/containers';
 
 export function DriverView({ 
   orders, 
   routes,
   profile, 
   products, 
+  units = [],
   onBack: _onBack,
   onNewOrderClick,
   showToast,
@@ -22,6 +24,7 @@ export function DriverView({
   routes: DeliveryRoute[]; 
   profile: UserProfile | null; 
   products: Product[]; 
+  units?: Unit[];
   onBack: () => void; 
   onNewOrderClick: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
@@ -85,8 +88,29 @@ export function DriverView({
         status: 'completed',
         updatedAt: serverTimestamp()
       });
+
+      // Al finalizar la ruta, la unidad pasa a estado "in_pantano" hasta que sea recibida y conciliada en bodega
+      if (route.unitNumber) {
+        try {
+          const unitsSnap = await getDocs(query(collection(db, 'units'), where('number', '==', route.unitNumber.trim())));
+          if (!unitsSnap.empty) {
+            const unitDoc = unitsSnap.docs[0];
+            await updateDoc(doc(db, 'units', unitDoc.id), {
+              status: 'in_pantano',
+              lastDriverId: route.driverId || profile.uid,
+              lastDriverName: profile.name,
+              lastRouteId: route.id,
+              lastRouteName: route.name,
+              updatedAt: serverTimestamp()
+            });
+          }
+        } catch (unitErr) {
+          console.warn("Could not update unit status to in_pantano on route completion:", unitErr);
+        }
+      }
+
       setSelectedRouteId(null);
-      showToast(`Ruta ${route.name} finalizada exitosamente`, 'success');
+      showToast(`Ruta ${route.name} finalizada exitosamente. Unidad marcada en Pantano para recepción de jabas.`, 'success');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `routes/${route.id}`);
     }
@@ -209,44 +233,69 @@ export function DriverView({
                 <p className="text-sm text-gray-400">No tienes rutas asignadas actualmente</p>
               </div>
             ) : (
-              activeRoutes.map(route => (
-                <div key={route.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm space-y-4">
-                  <div className="flex justify-between items-start">
-                    <div className="flex items-center gap-3">
-                      <div className={cn(
-                        "p-2 rounded-xl",
-                        route.status === 'in_progress' ? "bg-green-100 text-green-600" : "bg-blue-100 text-blue-600"
+              activeRoutes.map(route => {
+                const totalJv = route.containerVale?.jvOut || 0;
+                const totalJn = route.containerVale?.jnOut || 0;
+                const totalJabas = totalJv + totalJn;
+                const matchedUnit = units.find(u => u.number?.trim().toUpperCase() === (route.unitNumber || '').trim().toUpperCase());
+
+                return (
+                  <div key={route.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm space-y-4">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "p-2.5 rounded-xl",
+                          route.status === 'in_progress' ? "bg-green-100 text-green-600" : "bg-blue-100 text-blue-600"
+                        )}>
+                          <Truck className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-gray-900">{route.name}</h4>
+                          <p className="text-[10px] text-gray-500 font-bold uppercase">
+                            Unidad: {route.unitNumber || 'No asignada'} {matchedUnit ? `(${matchedUnit.status === 'in_route' ? 'En ruta' : 'Asignada'})` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <span className={cn(
+                        "text-[8px] px-2 py-0.5 rounded-full font-black uppercase",
+                        route.status === 'in_progress' ? "bg-green-600 text-white" : "bg-blue-600 text-white"
                       )}>
-                        <Navigation className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-gray-900">{route.name}</h4>
-                        <p className="text-[10px] text-gray-500 font-bold uppercase">{route.unitNumber}</p>
-                      </div>
+                        {route.status === 'in_progress' ? 'En Curso' : 'Preparada'}
+                      </span>
                     </div>
-                    <span className={cn(
-                      "text-[8px] px-2 py-0.5 rounded-full font-black uppercase",
-                      route.status === 'in_progress' ? "bg-green-600 text-white" : "bg-blue-600 text-white"
-                    )}>
-                      {route.status === 'in_progress' ? 'En Curso' : 'Preparada'}
-                    </span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button 
-                      className="flex-1 text-xs h-9" 
-                      variant={route.status === 'in_progress' ? 'outline' : 'default'}
-                      onClick={() => setSelectedRouteId(route.id)}
-                    >
-                      Ver {route.orderIds?.length || 0} Pedidos
-                    </Button>
-                    {route.status === 'active' && (
-                      <Button className="bg-green-600 hover:bg-green-700 text-xs h-9" onClick={() => startRoute(route)}>
-                        Iniciar Ruta
-                      </Button>
+
+                    {/* Container / Vale badge for driver */}
+                    {totalJabas > 0 && (
+                      <div className="bg-amber-50/80 rounded-xl p-2.5 border border-amber-200/80 flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <Box className="w-4 h-4 text-amber-700 shrink-0" />
+                          <span className="font-bold text-amber-950">Jabas a Bordo:</span>
+                        </div>
+                        <div className="flex items-center gap-2 font-black">
+                          <span className="text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-md">{totalJv} JV</span>
+                          <span className="text-gray-800 bg-gray-200 px-2 py-0.5 rounded-md">{totalJn} JN</span>
+                          <span className="text-amber-900 bg-amber-200 px-2 py-0.5 rounded-md">Total: {totalJabas}</span>
+                        </div>
+                      </div>
                     )}
+
+                    <div className="flex gap-2">
+                      <Button 
+                        className="flex-1 text-xs h-9" 
+                        variant={route.status === 'in_progress' ? 'outline' : 'default'}
+                        onClick={() => setSelectedRouteId(route.id)}
+                      >
+                        Ver {route.orderIds?.length || 0} Pedidos y Clientes
+                      </Button>
+                      {route.status === 'active' && (
+                        <Button className="bg-green-600 hover:bg-green-700 text-xs h-9" onClick={() => startRoute(route)}>
+                          Iniciar Ruta
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
@@ -261,7 +310,9 @@ export function DriverView({
                   </button>
                   <div>
                     <h3 className="font-bold text-lg">{selectedRoute?.name}</h3>
-                    <p className="text-[10px] text-gray-500 font-bold uppercase">{selectedRoute?.unitNumber}</p>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase">
+                      Unidad: {selectedRoute?.unitNumber || 'S/N'}
+                    </p>
                   </div>
                 </div>
                 <div className="flex flex-col items-end">
@@ -274,17 +325,35 @@ export function DriverView({
                 </div>
               </div>
 
+              {/* Driver Vale digital container summary banner */}
+              {selectedRoute && (selectedRoute.containerVale?.jvOut || selectedRoute.containerVale?.jnOut) ? (
+                <div className="bg-amber-50 rounded-2xl p-3.5 border border-amber-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-amber-700" />
+                      Vale Digital de Jabas en Unidad
+                    </span>
+                    <span className="text-[10px] font-bold text-amber-800 bg-amber-200/70 px-2 py-0.5 rounded-full">
+                      {(selectedRoute.containerVale?.jvOut || 0) + (selectedRoute.containerVale?.jnOut || 0)} Jabas Totales
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-900">
+                    Transportas <strong className="text-emerald-800">{selectedRoute.containerVale?.jvOut || 0} Jabas Verdes (JV)</strong> y <strong className="text-gray-900">{selectedRoute.containerVale?.jnOut || 0} Negras (JN)</strong>. Inventario Karey conciliará este mismo vale al finalizar tu viaje.
+                  </p>
+                </div>
+              ) : null}
+
               {selectedRoute?.status === 'active' ? (
                 <Button className="w-full bg-green-500 hover:bg-green-600 h-10 font-bold text-white" onClick={() => startRoute(selectedRoute)}>
                   INICIAR RUTA AHORA
                 </Button>
               ) : selectedRoute?.status === 'in_progress' && (
                 <Button variant="outline" className="w-full border-green-500 text-green-500 hover:bg-green-500/10 h-10 font-bold" onClick={() => finishRoute(selectedRoute)}>
-                  FINALIZAR RUTA
+                  FINALIZAR RUTA Y ENTREGAR EN BODEGA
                 </Button>
               )}
             </div>
-            <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Listado de Pedidos</h3>
+            <h3 className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Listado de Pedidos y Destinos</h3>
           </div>
         )}
 
@@ -309,78 +378,94 @@ export function DriverView({
               <p className="text-gray-500 font-medium">No hay pedidos {initialTab === 'pending' ? 'para entregar en esta ruta' : 'en el historial'}</p>
             </div>
           ) : (
-            displayedOrders.map((order, index) => (
-              <div 
-                key={order.id} 
-                onClick={() => setSelectedOrder(order)}
-                className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm space-y-3 cursor-pointer hover:border-blue-200 transition-colors relative"
-              >
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  {initialTab === 'pending' && (
-                    <span className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px] font-black shrink-0 shadow-xs">
-                      {index + 1}
-                    </span>
-                  )}
-                  <h4 className="font-bold text-gray-900">#{order.id.slice(-6).toUpperCase()}</h4>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className={cn(
-                    "text-[10px] px-2 py-0.5 rounded font-bold uppercase",
-                    order.status === 'shipped' ? "bg-indigo-100 text-indigo-700" : "bg-green-100 text-green-700"
-                  )}>
-                    {order.status === 'shipped' ? 'En Ruta' : 'Entregado'}
-                  </span>
-                  {order.deliveredAt && order.status === 'delivered' && (
-                    <span className="text-[8px] text-gray-400">Entregado: {order.deliveredAt.toDate ? order.deliveredAt.toDate().toLocaleTimeString() : ''}</span>
-                  )}
-                </div>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <p className="text-xs text-gray-900 font-bold">{order.userName}</p>
-                <div className="flex items-start gap-2 text-[10px] text-gray-500">
-                  <MapPin className="w-3 h-3 text-red-500 shrink-0 mt-0.5" />
-                  <span className="truncate">{order.address}</span>
-                </div>
-                
-                <div className="flex flex-wrap items-center gap-2 mt-1">
-                  {order.deliveryDistance && (
-                    <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100 flex items-center gap-1">
-                      <Navigation className="w-2.5 h-2.5 text-blue-600" />
-                      {order.deliveryDistance.toFixed(1)} km
-                    </span>
-                  )}
-                  {order.deliveryWindowStart && order.deliveryWindowEnd && (
-                    <div className="flex items-center gap-1.5 text-[9px] text-indigo-700 font-bold bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
-                      <Calendar className="w-3 h-3 text-indigo-600 shrink-0" />
-                      <span>Ventana: {order.deliverySlot?.split(' ')[0]} ({order.deliveryWindowStart} - {order.deliveryWindowEnd})</span>
-                    </div>
-                  )}
-                </div>
-
-                {order.status === 'delivered' && (
-                  <div className="flex justify-between items-center mt-2 p-2 bg-gray-50 rounded-lg">
-                    <div className="flex items-center gap-1.5 text-[10px] font-bold">
-                       {order.paymentMethod === 'cash' ? (
-                         <>
-                           <Banknote className="w-3 h-3 text-green-600" />
-                           <span className="text-green-700">Cobrar: ${order.total.toFixed(2)}</span>
-                         </>
-                       ) : (
-                         <>
-                           <CreditCard className="w-3 h-3 text-blue-600" />
-                           <span className="text-blue-700">Pagado</span>
-                         </>
-                       )}
-                    </div>
-                    <span className="text-[10px] text-gray-400">{order.items.length} productos</span>
+            displayedOrders.map((order, index) => {
+              const containerSummary = getOrderContainerSummary(order);
+              return (
+                <div 
+                  key={order.id} 
+                  onClick={() => setSelectedOrder(order)}
+                  className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm space-y-3 cursor-pointer hover:border-blue-200 transition-colors relative"
+                >
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center gap-2">
+                    {initialTab === 'pending' && (
+                      <span className="w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px] font-black shrink-0 shadow-xs">
+                        {index + 1}
+                      </span>
+                    )}
+                    <h4 className="font-bold text-gray-900">#{order.id.slice(-6).toUpperCase()}</h4>
                   </div>
-                )}
+                  <div className="flex flex-col items-end gap-1">
+                    <span className={cn(
+                      "text-[10px] px-2 py-0.5 rounded font-bold uppercase",
+                      order.status === 'shipped' ? "bg-indigo-100 text-indigo-700" : "bg-green-100 text-green-700"
+                    )}>
+                      {order.status === 'shipped' ? 'En Ruta' : 'Entregado'}
+                    </span>
+                    {order.deliveredAt && order.status === 'delivered' && (
+                      <span className="text-[8px] text-gray-400">Entregado: {order.deliveredAt.toDate ? order.deliveredAt.toDate().toLocaleTimeString() : ''}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-gray-900 font-black">{order.userName}</p>
+                    {containerSummary.hasJaba ? (
+                      <span className="text-[9px] font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md border border-amber-200 flex items-center gap-1">
+                        <Box className="w-2.5 h-2.5 text-amber-700" />
+                        {containerSummary.jabaItemCount} {containerSummary.jabaItemCount === 1 ? 'Prod en Jaba' : 'Prods en Jaba'}
+                        {containerSummary.jvCount > 0 && containerSummary.jnCount > 0 ? ` (${containerSummary.jvCount} JV / ${containerSummary.jnCount} JN)` : containerSummary.jvCount > 0 ? ` (${containerSummary.jvCount} JV)` : ` (${containerSummary.jnCount} JN)`}
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-semibold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-md">
+                        🛍️ En Bolsa
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-start gap-2 text-[10px] text-gray-500">
+                    <MapPin className="w-3 h-3 text-red-500 shrink-0 mt-0.5" />
+                    <span className="truncate">{order.address}</span>
+                  </div>
+                  
+                  <div className="flex flex-wrap items-center gap-2 mt-1">
+                    {order.deliveryDistance && (
+                      <span className="text-[10px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100 flex items-center gap-1">
+                        <Navigation className="w-2.5 h-2.5 text-blue-600" />
+                        {order.deliveryDistance.toFixed(1)} km
+                      </span>
+                    )}
+                    {order.deliveryWindowStart && order.deliveryWindowEnd && (
+                      <div className="flex items-center gap-1.5 text-[9px] text-indigo-700 font-bold bg-indigo-50 px-2 py-0.5 rounded-md border border-indigo-100">
+                        <Calendar className="w-3 h-3 text-indigo-600 shrink-0" />
+                        <span>Ventana: {order.deliverySlot?.split(' ')[0]} ({order.deliveryWindowStart} - {order.deliveryWindowEnd})</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {order.status === 'delivered' && (
+                    <div className="flex justify-between items-center mt-2 p-2 bg-gray-50 rounded-lg">
+                      <div className="flex items-center gap-1.5 text-[10px] font-bold">
+                         {order.paymentMethod === 'cash' ? (
+                           <>
+                             <Banknote className="w-3 h-3 text-green-600" />
+                             <span className="text-green-700">Cobrar: ${order.total.toFixed(2)}</span>
+                           </>
+                         ) : (
+                           <>
+                             <CreditCard className="w-3 h-3 text-blue-600" />
+                             <span className="text-blue-700">Pagado</span>
+                           </>
+                         )}
+                      </div>
+                      <span className="text-[10px] text-gray-400">{order.items.length} productos</span>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
-        )}
-      </div>
+              );
+            })
+          )}
+        </div>
       )}
 
       <AnimatePresence>
@@ -451,6 +536,30 @@ export function DriverView({
                   )}
                 </div>
 
+                {/* Packaging & Jaba Recovery Notice */}
+                {(() => {
+                  const summary = getOrderContainerSummary(selectedOrder);
+                  if (summary.hasJaba) {
+                    return (
+                      <div className="p-3.5 bg-amber-50/90 rounded-2xl border border-amber-200 space-y-1">
+                        <div className="flex items-center gap-2 text-amber-950 font-bold text-xs">
+                          <Box className="w-4 h-4 text-amber-700 shrink-0" />
+                          <span>Pedido con Jaba Retornable ({summary.jabaItemCount} artículos)</span>
+                        </div>
+                        <p className="text-[11px] text-amber-800">
+                          Recuerda vaciar el producto al cliente o recoger una jaba de intercambio. Las jabas están amparadas bajo tu vale digital y deben devolverse a bodega.
+                        </p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="p-2.5 bg-gray-50 rounded-xl border border-gray-100 text-[11px] text-gray-600 flex items-center gap-2">
+                      <span>🛍️</span>
+                      <span>Este pedido está completamente empacado en bolsas desechables.</span>
+                    </div>
+                  );
+                })()}
+
                 <div className="space-y-2">
                   <p className="text-xs text-gray-400 font-bold uppercase ml-1">Productos</p>
                   <div className="bg-white border border-gray-100 rounded-xl overflow-hidden divide-y divide-gray-50">
@@ -468,9 +577,13 @@ export function DriverView({
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <p className="text-xs font-bold text-gray-900 truncate">{item.name}</p>
-                              {item.packaging === 'jaba' ? (
-                                <span className="text-[9px] bg-amber-100 text-amber-900 font-bold px-1.5 py-0.2 rounded border border-amber-200">
-                                  📦 Jaba
+                              {item.packaging === 'jaba_negra' ? (
+                                <span className="text-[9px] bg-gray-900 text-white font-bold px-1.5 py-0.2 rounded border border-gray-800">
+                                  ⚫ Jaba Negra (JN)
+                                </span>
+                              ) : (item.packaging === 'jaba_verde' || item.packaging === 'jaba') ? (
+                                <span className="text-[9px] bg-emerald-100 text-emerald-900 font-bold px-1.5 py-0.2 rounded border border-emerald-300">
+                                  🟢 Jaba Verde (JV)
                                 </span>
                               ) : (
                                 <span className="text-[9px] bg-gray-100 text-gray-600 font-medium px-1.5 py-0.2 rounded">

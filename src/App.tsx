@@ -1681,6 +1681,7 @@ export default function App() {
           {currentPage === 'karey-movement' && profile && (
             <KareyMovementForm 
               units={units}
+              movements={containerMovements}
               drivers={allUsers.filter(u => u.role === 'driver')}
               routes={allRoutes}
               currentUser={profile}
@@ -1712,10 +1713,11 @@ export default function App() {
             <KareyTransferForm 
               units={units}
               drivers={allUsers.filter(u => u.role === 'driver')}
+              routes={allRoutes}
+              orders={allOrders}
               currentUser={profile}
               onBack={() => setCurrentPage('karey-dashboard')}
               onTransferComplete={() => {
-                showToast('Traspaso registrado con éxito', 'success');
                 setCurrentPage('karey-dashboard');
               }}
               showToast={showToast}
@@ -1864,13 +1866,14 @@ export default function App() {
               users={allUsers}
               routes={allRoutes}
               returns={allReturns}
+              containerMovements={containerMovements}
               onBack={() => setCurrentPage('admin-dashboard')}
             />
           )}
 
           {currentPage === 'dispatcher-view' && (
             profile ? (
-              <DispatcherView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
+              <DispatcherView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} units={units} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
             ) : (
               <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
                 <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
@@ -1881,7 +1884,7 @@ export default function App() {
 
           {currentPage === 'dispatcher-history' && (
             profile ? (
-              <DispatcherView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
+              <DispatcherView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} units={units} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
             ) : (
               <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
                 <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
@@ -1892,7 +1895,7 @@ export default function App() {
 
           {currentPage === 'preparer-view' && (
             profile ? (
-              <PreparerView orders={allOrders} routes={allRoutes} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
+              <PreparerView orders={allOrders} routes={allRoutes} products={products} profile={profile} units={units} users={allUsers} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
             ) : (
               <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
                 <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
@@ -1903,7 +1906,7 @@ export default function App() {
 
           {currentPage === 'preparer-history' && (
             profile ? (
-              <PreparerView orders={allOrders} routes={allRoutes} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
+              <PreparerView orders={allOrders} routes={allRoutes} products={products} profile={profile} units={units} users={allUsers} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
             ) : (
               <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
                 <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
@@ -1917,6 +1920,7 @@ export default function App() {
               <DriverView 
                 orders={allOrders} 
                 routes={allRoutes}
+                units={units}
                 profile={profile} 
                 products={products} 
                 onBack={() => setCurrentPage('home')} 
@@ -1940,6 +1944,7 @@ export default function App() {
               <DriverView 
                 orders={allOrders} 
                 routes={allRoutes}
+                units={units}
                 profile={profile} 
                 products={products} 
                 onBack={() => setCurrentPage('home')} 
@@ -1960,7 +1965,7 @@ export default function App() {
 
           {currentPage === 'loader-view' && (
             profile ? (
-              <LoaderView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
+              <LoaderView orders={allOrders} routes={allRoutes} users={allUsers} units={units} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="pending" />
             ) : (
               <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
                 <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />
@@ -1971,7 +1976,7 @@ export default function App() {
 
           {currentPage === 'loader-history' && (
             profile ? (
-              <LoaderView orders={allOrders} routes={allRoutes} users={allUsers} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
+              <LoaderView orders={allOrders} routes={allRoutes} users={allUsers} units={units} products={products} profile={profile} onBack={() => setCurrentPage('home')} showToast={showToast} initialTab="history" />
             ) : (
               <div className="h-[60vh] flex flex-col items-center justify-center text-center p-6 bg-white rounded-3xl border border-gray-100">
                 <Loader2 className="w-16 h-16 text-red-600 animate-spin mb-4" />

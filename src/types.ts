@@ -83,7 +83,7 @@ export interface OrderItem {
   approxWeight?: number;
   preparerWeight?: number;
   loaderWeight?: number;
-  packaging?: 'bolsa' | 'jaba';
+  packaging?: 'bolsa' | 'jaba' | 'jaba_verde' | 'jaba_negra';
   comment?: string;
   notes?: string;
   checkedAt?: FirestoreTimestamp;
@@ -147,6 +147,9 @@ export interface Order {
   processedBy?: string;
   processedByName?: string;
   weightValidated?: boolean;
+  jvCount?: number;
+  jnCount?: number;
+  hasJaba?: boolean;
   notes?: string;
 }
 
@@ -163,21 +166,12 @@ export interface DeliveryRoute {
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
   containerVale?: {
-    qtyOut?: number;
-    qtyReturned?: number;
     jvOut?: number;
     jnOut?: number;
-    jvReturned?: number;
-    jnReturned?: number;
     qtyOutBy?: string;
     qtyOutByName?: string;
     qtyOutAt?: FirestoreTimestamp;
-    qtyReturnedBy?: string;
-    qtyReturnedByName?: string;
-    qtyReturnedAt?: FirestoreTimestamp;
     unitCost?: number;
-    status?: 'open' | 'reconciled' | 'shortage';
-    notes?: string;
   };
 }
 

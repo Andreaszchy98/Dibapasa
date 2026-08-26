@@ -274,9 +274,13 @@ export function AdminOrdersView({
                             <div>
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="text-xs font-medium text-gray-900">{item.name}</span>
-                                {item.packaging === 'jaba' ? (
-                                  <span className="text-[9px] bg-amber-100 text-amber-800 font-bold px-1.5 py-0.2 rounded border border-amber-200">
-                                    📦 Jaba
+                                {item.packaging === 'jaba_negra' ? (
+                                  <span className="text-[9px] bg-gray-900 text-white font-bold px-1.5 py-0.2 rounded border border-gray-800">
+                                    ⚫ Jaba Negra
+                                  </span>
+                                ) : (item.packaging === 'jaba_verde' || item.packaging === 'jaba') ? (
+                                  <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded border border-emerald-300">
+                                    🟢 Jaba Verde
                                   </span>
                                 ) : (
                                   <span className="text-[9px] bg-gray-100 text-gray-600 font-medium px-1.5 py-0.2 rounded">

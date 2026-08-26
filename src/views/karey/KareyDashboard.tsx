@@ -296,7 +296,7 @@ export function KareyDashboard({
             <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-blue-600 transition-colors" />
           </div>
           <div>
-            <h4 className="font-bold text-sm text-gray-900">Registrar Retorno</h4>
+            <h4 className="font-bold text-sm text-gray-900">Recepción y Cierre</h4>
             <p className="text-xs text-gray-400 mt-0.5">Contar jabas y cerrar vale de viaje</p>
           </div>
         </button>
@@ -332,6 +332,106 @@ export function KareyDashboard({
             <p className="text-xs text-gray-400 mt-0.5">Historial y cobro de faltantes</p>
           </div>
         </button>
+      </div>
+
+      {/* Active Movements / Vales in Transit Section */}
+      <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+              <Package className="w-5 h-5 text-blue-600" />
+              Vales de Salida Activos ({movements.filter(m => m.status === 'active' || m.status === 'pantano' || m.status === 'loading').length})
+            </h3>
+            <p className="text-xs text-gray-400">
+              Vales generados por cargadores/preparadores. Revisa que el chofer traiga las jabas de vuelta al regresar.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => onNavigate('karey-return')}
+            className="bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs gap-1.5 h-9 px-3.5 font-bold shrink-0 self-stretch sm:self-auto justify-center shadow-xs"
+          >
+            <ArrowDownLeft className="w-4 h-4" />
+            Recepción y Cierre de Vales
+          </Button>
+        </div>
+
+        {movements.filter(m => m.status === 'active' || m.status === 'pantano' || m.status === 'loading').length === 0 ? (
+          <div className="p-6 bg-gray-50/70 rounded-2xl border border-dashed border-gray-200 text-center text-xs text-gray-400">
+            No hay vales activos en tránsito pendientes de retorno en este momento.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {movements
+              .filter(m => m.status === 'active' || m.status === 'pantano' || m.status === 'loading')
+              .map(m => {
+                const exitTimeStr = m.exitTime?.seconds 
+                  ? new Date(m.exitTime.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  : 'En curso';
+
+                return (
+                  <div 
+                    key={m.id}
+                    className={cn(
+                      "p-4 rounded-2xl border transition-all space-y-3",
+                      m.status === 'pantano' 
+                        ? "bg-rose-50/50 border-rose-300 ring-2 ring-rose-200"
+                        : "bg-blue-50/30 border-blue-100 hover:border-blue-300"
+                    )}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-black text-sm text-gray-900">{m.folio}</span>
+                        {m.status === 'pantano' ? (
+                          <span className="text-[9px] font-black uppercase bg-rose-600 text-white px-2 py-0.5 rounded-full">
+                            Pantano
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-bold uppercase bg-blue-600 text-white px-2 py-0.5 rounded-full">
+                            En Tránsito
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[11px] font-black text-gray-700 bg-white px-2 py-0.5 rounded-md border border-gray-200">
+                        Unidad: {m.unitNumber}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div>
+                        <span className="text-gray-400 block text-[10px]">Chofer</span>
+                        <span className="font-bold text-gray-800 truncate block">{m.driverName}</span>
+                      </div>
+                      <div>
+                        <span className="text-gray-400 block text-[10px]">Salida</span>
+                        <span className="font-medium text-gray-700">{exitTimeStr}</span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-md">
+                          {m.jvOut} JV
+                        </span>
+                        <span className="font-bold text-gray-800 bg-gray-200/70 px-2 py-0.5 rounded-md">
+                          {m.jnOut} JN
+                        </span>
+                        <span className="font-bold text-blue-900">Total: {m.jvOut + m.jnOut}</span>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => onNavigate('karey-return')}
+                        className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] h-7 px-3 rounded-lg font-bold flex items-center gap-1 shrink-0"
+                      >
+                        <ArrowDownLeft className="w-3.5 h-3.5" />
+                        Recepción y Cierre
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+        )}
       </div>
 
       {/* Units Fleet Status Section */}

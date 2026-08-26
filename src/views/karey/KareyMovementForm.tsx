@@ -10,7 +10,7 @@ import {
   Check, 
   FileText, 
   MapPin,
-  Sparkles
+  RefreshCw
 } from 'lucide-react';
 import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
@@ -19,6 +19,7 @@ import { Unit, ContainerMovement, UserProfile, DeliveryRoute, ToastType } from '
 
 export function KareyMovementForm({
   units,
+  movements,
   drivers,
   routes,
   currentUser,
@@ -27,6 +28,7 @@ export function KareyMovementForm({
   showToast
 }: {
   units: Unit[];
+  movements: ContainerMovement[];
   drivers: UserProfile[];
   routes: DeliveryRoute[];
   currentUser: UserProfile;
@@ -55,11 +57,13 @@ export function KareyMovementForm({
     return routes.find(r => r.id === selectedRouteId);
   }, [routes, selectedRouteId]);
 
-  // Check if the chosen unit has an open/pantano condition
-  const isUnitInConflict = useMemo(() => {
-    if (!selectedUnit) return false;
-    return selectedUnit.status === 'in_route' || selectedUnit.status === 'in_pantano' || selectedUnit.status === 'maintenance';
-  }, [selectedUnit]);
+  // Check if selected driver has an open movement (in any unit)
+  const previousOpenMovement = useMemo(() => {
+    if (!selectedDriverId) return null;
+    return movements.find(
+      m => m.driverId === selectedDriverId && (m.status === 'active' || m.status === 'loading')
+    ) || null;
+  }, [movements, selectedDriverId]);
 
   // Driver active routes
   const driverRoutes = useMemo(() => {
@@ -84,6 +88,25 @@ export function KareyMovementForm({
 
     setIsSaving(true);
     try {
+      // Buscar si el chofer seleccionado ya tiene un vale abierto sin cerrar (en cualquier unidad)
+      const prevOpen = movements.find(
+        m => m.driverId === selectedDriver!.uid && (m.status === 'active' || m.status === 'loading')
+      );
+      if (prevOpen) {
+        // Cerrar (marcar Pantano) el vale anterior de ese chofer
+        await updateDoc(doc(db, 'containerMovements', prevOpen.id), {
+          status: 'pantano',
+          updatedAt: serverTimestamp()
+        });
+        // Marcar la unidad de ESE vale anterior como en Pantano (puede ser una unidad distinta a la que se está despachando ahora)
+        if (prevOpen.unitId) {
+          await updateDoc(doc(db, 'units', prevOpen.unitId), {
+            status: 'in_pantano',
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+
       const movementData = {
         unitId: selectedUnit!.id,
         unitNumber: selectedUnit!.number,
@@ -105,11 +128,9 @@ export function KareyMovementForm({
 
       const docRef = await addDoc(collection(db, 'containerMovements'), movementData);
 
-      // If unit was already in route or pantano, mark it as in_pantano or in_route
-      const newUnitStatus = isUnitInConflict ? 'in_pantano' : 'in_route';
-
+      // Current unit being dispatched follows normal flow (in_route)
       const updatedUnitPayload: Partial<Unit> = {
-        status: newUnitStatus,
+        status: 'in_route',
         lastDriverId: selectedDriver!.uid,
         lastDriverName: selectedDriver!.name,
         lastRouteId: selectedRoute?.id || '',
@@ -160,27 +181,26 @@ export function KareyMovementForm({
 
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-6">
         {/* Folio */}
-        <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100 flex items-center justify-between">
-          <div>
+        <div className="bg-emerald-50/60 p-3.5 sm:p-4 rounded-2xl border border-emerald-100/80 flex items-center justify-between gap-3 w-full">
+          <div className="min-w-0 flex-1">
             <span className="text-[10px] font-bold uppercase text-emerald-800 tracking-wider block">Folio del Vale</span>
             <input
               type="text"
               value={folio}
               onChange={(e) => setFolio(e.target.value)}
-              className="font-black text-lg text-emerald-900 bg-transparent border-0 p-0 focus:ring-0"
+              className="font-black text-base sm:text-lg text-emerald-950 bg-transparent border-0 p-0 focus:ring-0 w-full truncate"
               required
             />
           </div>
-          <Button
+          <button
             type="button"
-            variant="outline"
-            size="sm"
             onClick={() => setFolio(`KRY-${Math.floor(100000 + Math.random() * 900000)}`)}
-            className="text-xs bg-white text-emerald-700 border-emerald-200"
+            title="Regenerar Folio"
+            className="p-2 text-xs text-emerald-700 bg-white/90 hover:bg-white border border-emerald-200 rounded-xl hover:text-emerald-900 transition-colors flex items-center gap-1.5 shrink-0 shadow-2xs"
           >
-            <Sparkles className="w-3 h-3 mr-1" />
-            Regenerar
-          </Button>
+            <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
+            <span className="hidden sm:inline text-[11px] font-medium">Regenerar</span>
+          </button>
         </div>
 
         {/* Step 1: Select Unit */}
@@ -203,21 +223,6 @@ export function KareyMovementForm({
             ))}
           </select>
         </div>
-
-        {/* Pantano / Conflict Alert if unit has active unclosed movement */}
-        {isUnitInConflict && (
-          <motion.div
-            initial={{ opacity: 0, y: -5 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl flex items-start gap-3 text-rose-800"
-          >
-            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-            <div className="text-xs leading-relaxed">
-              <strong className="block font-bold text-rose-900">¡Alerta de Estado Pantano!</strong>
-              La unidad <span className="font-bold underline">{selectedUnit?.number}</span> se encuentra actualmente en estado <strong>"{selectedUnit?.status}"</strong> con un vale previo no conciliado. Si despachas esta unidad ahora, el sistema registrará la unidad en <strong>Pantano</strong> hasta que se cierren ambos vales.
-            </div>
-          </motion.div>
-        )}
 
         {/* Step 2: Select Driver */}
         <div className="space-y-2">
@@ -242,6 +247,21 @@ export function KareyMovementForm({
             ))}
           </select>
         </div>
+
+        {/* Pantano / Conflict Alert if driver has an open unclosed movement */}
+        {previousOpenMovement && (
+          <motion.div
+            initial={{ opacity: 0, y: -5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl flex items-start gap-3 text-rose-800"
+          >
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="text-xs leading-relaxed">
+              <strong className="block font-bold text-rose-900">¡Alerta de Estado Pantano!</strong>
+              El chofer <span className="font-bold underline">{selectedDriver?.name}</span> tiene actualmente un vale previo sin cerrar (<span className="font-mono font-bold">{previousOpenMovement.folio}</span> en la unidad #{previousOpenMovement.unitNumber}). Al despachar este nuevo vale, el vale anterior y su unidad quedarán marcados en <strong>Pantano</strong> hasta su respectiva conciliación.
+            </div>
+          </motion.div>
+        )}
 
         {/* Step 2.5: Optional Route Association */}
         {driverRoutes.length > 0 && (

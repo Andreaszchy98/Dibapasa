@@ -4,7 +4,7 @@ import { Package, Truck, AlertTriangle, MapPin, Navigation, Clock, X, Check, Pac
 import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc, Timestamp } from 'firebase/firestore';
 import { Button, cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order, DeliveryRoute, UserProfile, Product, OrderItem, Unit } from '../../types';
+import { Order, DeliveryRoute, UserProfile, Product, OrderItem, Unit, ContainerMovement } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
 import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
 import { calculateOrderPricing } from '../../lib/orders';
@@ -17,6 +17,7 @@ export function LoaderView({
   products, 
   profile,
   units = [],
+  movements = [],
   onBack: _onBack, 
   showToast,
   initialTab = 'pending'
@@ -27,6 +28,7 @@ export function LoaderView({
   products: Product[]; 
   profile: UserProfile;
   units?: Unit[];
+  movements?: ContainerMovement[];
   onBack: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
   initialTab?: 'pending' | 'history'; 
@@ -123,14 +125,16 @@ export function LoaderView({
       setCheckedItems(initialChecks);
       setOrderNotes(selectedOrder.notes || '');
 
-      // Load accurate counts from order or calculate from items
-      if (selectedOrder.jvCount !== undefined || selectedOrder.jnCount !== undefined) {
-        setJvCount(selectedOrder.jvCount ?? (greenJabaCount > 0 ? 1 : 0));
-        setJnCount(selectedOrder.jnCount ?? (blackJabaCount > 0 ? 1 : 0));
-      } else {
-        setJvCount(greenJabaCount > 0 ? 1 : 0);
-        setJnCount(blackJabaCount > 0 ? 1 : 0);
-      }
+      // Accurate counts from order, or initialize if order has items in jaba
+      const defaultJv = selectedOrder.jvCount !== undefined && selectedOrder.jvCount > 0
+        ? selectedOrder.jvCount
+        : (greenJabaCount > 0 ? Math.max(1, greenJabaCount) : (selectedOrder.jvCount ?? 0));
+      const defaultJn = selectedOrder.jnCount !== undefined && selectedOrder.jnCount > 0
+        ? selectedOrder.jnCount
+        : (blackJabaCount > 0 ? Math.max(1, blackJabaCount) : (selectedOrder.jnCount ?? 0));
+
+      setJvCount(defaultJv);
+      setJnCount(defaultJn);
       setJabasNotes('');
     } else {
       setLoaderWeights({});
@@ -152,18 +156,18 @@ export function LoaderView({
         [productId]: newPkg
       };
 
-      const hasGreen = Object.values(updated).some(p => p === 'jaba_verde' || p === 'jaba');
-      const hasBlack = Object.values(updated).some(p => p === 'jaba_negra');
+      const greenCount = Object.values(updated).filter(p => p === 'jaba_verde' || p === 'jaba').length;
+      const blackCount = Object.values(updated).filter(p => p === 'jaba_negra').length;
 
       setJvCount(cur => {
-        if (hasGreen && cur <= 0) return 1;
-        if (!hasGreen) return 0;
+        if (greenCount > 0 && cur <= 0) return Math.max(1, greenCount);
+        if (greenCount === 0 && cur > 0 && cur <= 1) return 0;
         return cur;
       });
 
       setJnCount(cur => {
-        if (hasBlack && cur <= 0) return 1;
-        if (!hasBlack) return 0;
+        if (blackCount > 0 && cur <= 0) return Math.max(1, blackCount);
+        if (blackCount === 0 && cur > 0 && cur <= 1) return 0;
         return cur;
       });
 
@@ -172,7 +176,8 @@ export function LoaderView({
   };
 
   const hasJabaInOrder = useMemo(() => {
-    return Object.values(itemPackaging).some(pkg => isJabaPackaging(pkg)) || (jvCount > 0 || jnCount > 0);
+    const hasJabaInItems = Object.values(itemPackaging).some(pkg => isJabaPackaging(pkg));
+    return hasJabaInItems || (jvCount > 0 || jnCount > 0);
   }, [itemPackaging, jvCount, jnCount]);
 
   // Recalculate preview pricing
@@ -210,14 +215,20 @@ export function LoaderView({
 
       const { total: adjustedTotal } = calculateOrderPricing(updatedItems, order.deliveryFee, order.discount);
 
+      const greenCount = updatedItems.filter(it => isGreenJaba(it.packaging)).length;
+      const blackCount = updatedItems.filter(it => isBlackJaba(it.packaging)).length;
+      const resolvedJv = jvCount > 0 ? jvCount : (greenCount > 0 ? Math.max(1, greenCount) : 0);
+      const resolvedJn = jnCount > 0 ? jnCount : (blackCount > 0 ? Math.max(1, blackCount) : 0);
+      const orderHasJabas = hasJabaInOrder || resolvedJv > 0 || resolvedJn > 0;
+
       await updateDoc(doc(db, 'orders', order.id), {
         items: updatedItems,
         notes: orderNotes.trim(),
         adjustedTotal: adjustedTotal,
         weightValidated: true,
-        jvCount: jvCount,
-        jnCount: jnCount,
-        hasJaba: hasJabaInOrder,
+        jvCount: resolvedJv,
+        jnCount: resolvedJn,
+        hasJaba: orderHasJabas,
         updatedAt: serverTimestamp()
       });
 
@@ -228,14 +239,15 @@ export function LoaderView({
           const assignedDriver = users.find(u => u.uid === route.driverId);
           const { totalJv, totalJn } = calculateRouteContainerTotals(route.id, orders, {
             id: order.id,
-            jvCount: hasJabaInOrder ? jvCount : 0,
-            jnCount: hasJabaInOrder ? jnCount : 0
-          });
+            jvCount: resolvedJv,
+            jnCount: resolvedJn
+          }, route);
 
           await syncRouteContainerMovement({
             route,
             driver: assignedDriver,
             units,
+            movements,
             operatorProfile: profile,
             jvCount: totalJv,
             jnCount: totalJn,
@@ -328,6 +340,12 @@ export function LoaderView({
 
       const { total: adjustedTotal } = calculateOrderPricing(updatedItems, order.deliveryFee, order.discount);
 
+      const greenCount = updatedItems.filter(it => isGreenJaba(it.packaging)).length;
+      const blackCount = updatedItems.filter(it => isBlackJaba(it.packaging)).length;
+      const resolvedJv = jvCount > 0 ? jvCount : (greenCount > 0 ? Math.max(1, greenCount) : 0);
+      const resolvedJn = jnCount > 0 ? jnCount : (blackCount > 0 ? Math.max(1, blackCount) : 0);
+      const orderHasJabas = hasJabaInOrder || resolvedJv > 0 || resolvedJn > 0;
+
       const updateData: Partial<Order> = { 
         status: 'shipped', 
         onboarded: true,
@@ -338,9 +356,9 @@ export function LoaderView({
         notes: orderNotes.trim(),
         adjustedTotal: adjustedTotal,
         weightValidated: hasKgItems ? true : order.weightValidated,
-        jvCount: jvCount,
-        jnCount: jnCount,
-        hasJaba: hasJabaInOrder,
+        jvCount: resolvedJv,
+        jnCount: resolvedJn,
+        hasJaba: orderHasJabas,
         updatedAt: serverTimestamp()
       };
 
@@ -350,15 +368,16 @@ export function LoaderView({
       const assignedDriver = users.find(u => u.uid === route.driverId);
       const { totalJv, totalJn } = calculateRouteContainerTotals(route.id, orders, {
         id: order.id,
-        jvCount: hasJabaInOrder ? jvCount : 0,
-        jnCount: hasJabaInOrder ? jnCount : 0
-      });
+        jvCount: resolvedJv,
+        jnCount: resolvedJn
+      }, route);
 
       if (totalJv > 0 || totalJn > 0 || route.containerVale) {
         await syncRouteContainerMovement({
           route,
           driver: assignedDriver,
           units,
+          movements,
           operatorProfile: profile,
           jvCount: totalJv,
           jnCount: totalJn,

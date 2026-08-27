@@ -16,6 +16,7 @@ import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/fi
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Button, Input, cn } from '../../components/ui';
 import { Unit, ContainerMovement, UserProfile, DeliveryRoute, ToastType } from '../../types';
+import { detectAndFlagPantano } from '../../lib/containers';
 
 export function KareyMovementForm({
   units,
@@ -88,24 +89,8 @@ export function KareyMovementForm({
 
     setIsSaving(true);
     try {
-      // Buscar si el chofer seleccionado ya tiene un vale abierto sin cerrar (en cualquier unidad)
-      const prevOpen = movements.find(
-        m => m.driverId === selectedDriver!.uid && (m.status === 'active' || m.status === 'loading')
-      );
-      if (prevOpen) {
-        // Cerrar (marcar Pantano) el vale anterior de ese chofer
-        await updateDoc(doc(db, 'containerMovements', prevOpen.id), {
-          status: 'pantano',
-          updatedAt: serverTimestamp()
-        });
-        // Marcar la unidad de ESE vale anterior como en Pantano (puede ser una unidad distinta a la que se está despachando ahora)
-        if (prevOpen.unitId) {
-          await updateDoc(doc(db, 'units', prevOpen.unitId), {
-            status: 'in_pantano',
-            updatedAt: serverTimestamp()
-          });
-        }
-      }
+      // Buscar si el chofer seleccionado ya tiene un vale previo abierto sin cerrar y marcarlo en pantano
+      await detectAndFlagPantano(selectedDriver!.uid, movements);
 
       const movementData = {
         unitId: selectedUnit!.id,

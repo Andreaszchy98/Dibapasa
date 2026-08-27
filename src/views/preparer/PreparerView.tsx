@@ -4,7 +4,7 @@ import { ClipboardList, Clock, Package, X, Check, Edit3, MessageSquare, Box, Sho
 import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc, Timestamp } from 'firebase/firestore';
 import { Button, cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order, DeliveryRoute, Product, UserProfile, OrderItem, Unit } from '../../types';
+import { Order, DeliveryRoute, Product, UserProfile, OrderItem, Unit, ContainerMovement } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
 import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
 import { calculateOrderPricing } from '../../lib/orders';
@@ -17,6 +17,7 @@ export function PreparerView({
   profile,
   units = [],
   users = [],
+  movements = [],
   onBack: _onBack, 
   showToast,
   initialTab = 'pending'
@@ -27,6 +28,7 @@ export function PreparerView({
   profile: UserProfile;
   units?: Unit[];
   users?: UserProfile[];
+  movements?: ContainerMovement[];
   onBack: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
   initialTab?: 'pending' | 'history'; 
@@ -117,13 +119,16 @@ export function PreparerView({
     setCheckedItems(initialChecks);
     setOrderNotes(order.notes || '');
 
-    if (order.jvCount !== undefined || order.jnCount !== undefined) {
-      setJvCount(order.jvCount ?? (greenJabaCount > 0 ? 1 : 0));
-      setJnCount(order.jnCount ?? (blackJabaCount > 0 ? 1 : 0));
-    } else {
-      setJvCount(greenJabaCount > 0 ? 1 : 0);
-      setJnCount(blackJabaCount > 0 ? 1 : 0);
-    }
+    // Accurate counts from order, or initialize if order has items in jaba
+    const defaultJv = order.jvCount !== undefined && order.jvCount > 0
+      ? order.jvCount
+      : (greenJabaCount > 0 ? Math.max(1, greenJabaCount) : (order.jvCount ?? 0));
+    const defaultJn = order.jnCount !== undefined && order.jnCount > 0
+      ? order.jnCount
+      : (blackJabaCount > 0 ? Math.max(1, blackJabaCount) : (order.jnCount ?? 0));
+
+    setJvCount(defaultJv);
+    setJnCount(defaultJn);
     setJabasNotes('');
   };
 
@@ -138,18 +143,18 @@ export function PreparerView({
         [productId]: newPkg
       };
 
-      const hasGreen = Object.values(updated).some(p => p === 'jaba_verde' || p === 'jaba');
-      const hasBlack = Object.values(updated).some(p => p === 'jaba_negra');
+      const greenCount = Object.values(updated).filter(p => p === 'jaba_verde' || p === 'jaba').length;
+      const blackCount = Object.values(updated).filter(p => p === 'jaba_negra').length;
 
       setJvCount(cur => {
-        if (hasGreen && cur <= 0) return 1;
-        if (!hasGreen) return 0;
+        if (greenCount > 0 && cur <= 0) return Math.max(1, greenCount);
+        if (greenCount === 0 && cur > 0 && cur <= 1) return 0;
         return cur;
       });
 
       setJnCount(cur => {
-        if (hasBlack && cur <= 0) return 1;
-        if (!hasBlack) return 0;
+        if (blackCount > 0 && cur <= 0) return Math.max(1, blackCount);
+        if (blackCount === 0 && cur > 0 && cur <= 1) return 0;
         return cur;
       });
 
@@ -159,7 +164,8 @@ export function PreparerView({
 
   // Check if any product is set to Jaba
   const hasJabaInOrder = useMemo(() => {
-    return Object.values(itemPackaging).some(pkg => isJabaPackaging(pkg)) || (jvCount > 0 || jnCount > 0);
+    const hasJabaInItems = Object.values(itemPackaging).some(pkg => isJabaPackaging(pkg));
+    return hasJabaInItems || (jvCount > 0 || jnCount > 0);
   }, [itemPackaging, jvCount, jnCount]);
 
   // Recalculate preview total based on current weights
@@ -200,14 +206,20 @@ export function PreparerView({
 
       const { total: newTotal } = calculateOrderPricing(updatedItems, order.deliveryFee, order.discount);
 
+      const greenCount = updatedItems.filter(it => isGreenJaba(it.packaging)).length;
+      const blackCount = updatedItems.filter(it => isBlackJaba(it.packaging)).length;
+      const resolvedJv = jvCount > 0 ? jvCount : (greenCount > 0 ? Math.max(1, greenCount) : 0);
+      const resolvedJn = jnCount > 0 ? jnCount : (blackCount > 0 ? Math.max(1, blackCount) : 0);
+      const orderHasJabas = hasJabaInOrder || resolvedJv > 0 || resolvedJn > 0;
+
       const updatePayload: Partial<Order> = {
         items: updatedItems,
         notes: orderNotes.trim(),
         adjustedTotal: newTotal,
         weightValidated: true,
-        jvCount: jvCount,
-        jnCount: jnCount,
-        hasJaba: hasJabaInOrder,
+        jvCount: resolvedJv,
+        jnCount: resolvedJn,
+        hasJaba: orderHasJabas,
         updatedAt: serverTimestamp()
       };
 
@@ -228,14 +240,15 @@ export function PreparerView({
             const assignedDriver = users.find(u => u.uid === route.driverId);
             const { totalJv, totalJn } = calculateRouteContainerTotals(route.id, orders, {
               id: order.id,
-              jvCount: hasJabaInOrder ? jvCount : 0,
-              jnCount: hasJabaInOrder ? jnCount : 0
-            });
+              jvCount: resolvedJv,
+              jnCount: resolvedJn
+            }, route);
 
             await syncRouteContainerMovement({
               route,
               driver: assignedDriver,
               units,
+              movements,
               operatorProfile: profile,
               jvCount: totalJv,
               jnCount: totalJn,

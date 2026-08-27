@@ -412,9 +412,10 @@ export function DriverView({
                     <p className="text-xs text-gray-900 font-black">{order.userName}</p>
                     {containerSummary.hasJaba ? (
                       <span className="text-[9px] font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md border border-amber-200 flex items-center gap-1">
-                        <Box className="w-2.5 h-2.5 text-amber-700" />
-                        {containerSummary.jabaItemCount} {containerSummary.jabaItemCount === 1 ? 'Prod en Jaba' : 'Prods en Jaba'}
-                        {containerSummary.jvCount > 0 && containerSummary.jnCount > 0 ? ` (${containerSummary.jvCount} JV / ${containerSummary.jnCount} JN)` : containerSummary.jvCount > 0 ? ` (${containerSummary.jvCount} JV)` : ` (${containerSummary.jnCount} JN)`}
+                        <Box className="w-2.5 h-2.5 text-amber-700 shrink-0" />
+                        {containerSummary.jvCount > 0 || containerSummary.jnCount > 0
+                          ? `${(containerSummary.jvCount || 0) + (containerSummary.jnCount || 0)} Jaba(s) (${containerSummary.jvCount || 0} JV / ${containerSummary.jnCount || 0} JN)`
+                          : `${containerSummary.jabaItemCount} Prod(s) en Jaba`}
                       </span>
                     ) : (
                       <span className="text-[9px] font-semibold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-md">
@@ -541,13 +542,20 @@ export function DriverView({
                   const summary = getOrderContainerSummary(selectedOrder);
                   if (summary.hasJaba) {
                     return (
-                      <div className="p-3.5 bg-amber-50/90 rounded-2xl border border-amber-200 space-y-1">
-                        <div className="flex items-center gap-2 text-amber-950 font-bold text-xs">
-                          <Box className="w-4 h-4 text-amber-700 shrink-0" />
-                          <span>Pedido con Jaba Retornable ({summary.jabaItemCount} artículos)</span>
+                      <div className="p-3.5 bg-amber-50/90 rounded-2xl border border-amber-200 space-y-1.5 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-amber-950 font-bold text-xs">
+                            <Box className="w-4 h-4 text-amber-700 shrink-0" />
+                            <span>Pedido con Jabas Retornables</span>
+                          </div>
+                          {(summary.jvCount > 0 || summary.jnCount > 0) && (
+                            <span className="text-[10px] font-black bg-amber-200 text-amber-950 px-2 py-0.5 rounded-full border border-amber-300">
+                              <span className="text-emerald-800">{summary.jvCount || 0} JV</span> • <span className="text-gray-900">{summary.jnCount || 0} JN</span>
+                            </span>
+                          )}
                         </div>
                         <p className="text-[11px] text-amber-800">
-                          Recuerda vaciar el producto al cliente o recoger una jaba de intercambio. Las jabas están amparadas bajo tu vale digital y deben devolverse a bodega.
+                          Recuerda vaciar el producto al cliente o recoger una jaba de intercambio. Las jabas están amparadas bajo tu vale digital de salida y deben devolverse a bodega.
                         </p>
                       </div>
                     );

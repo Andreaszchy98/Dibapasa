@@ -5,10 +5,10 @@ import { doc, updateDoc, addDoc, collection, serverTimestamp, deleteDoc, deleteF
 import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order, DeliveryRoute, UserProfile, Product, Unit } from '../../types';
+import { Order, DeliveryRoute, UserProfile, Product, Unit, ContainerMovement } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
 import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
-import { updateRouteUnitAndDriver } from '../../lib/containers';
+import { updateRouteUnitAndDriver, calculateRouteContainerTotals, syncRouteContainerMovement } from '../../lib/containers';
 
 export function DispatcherView({ 
   orders, 
@@ -17,6 +17,7 @@ export function DispatcherView({
   products, 
   profile,
   units = [],
+  movements = [],
   onBack: _onBack, 
   showToast,
   initialTab = 'pending'
@@ -27,6 +28,7 @@ export function DispatcherView({
   products: Product[]; 
   profile: UserProfile;
   units?: Unit[];
+  movements?: ContainerMovement[];
   onBack: () => void; 
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void; 
   initialTab?: 'pending' | 'history'; 
@@ -270,9 +272,28 @@ export function DispatcherView({
 
       const existingRoute = routes.find(r => r.orderIds.includes(orderId));
       if (existingRoute && existingRoute.id !== routeId) {
+        const remainingExistingIds = existingRoute.orderIds.filter(id => id !== orderId);
         await updateDoc(doc(db, 'routes', existingRoute.id), {
-          orderIds: existingRoute.orderIds.filter(id => id !== orderId)
+          orderIds: remainingExistingIds,
+          updatedAt: serverTimestamp()
         });
+
+        // Sync old route's container vale if it had one
+        const remainingOrders = orders.filter(o => remainingExistingIds.includes(o.id));
+        const oldTotals = calculateRouteContainerTotals(existingRoute.id, remainingOrders, undefined, { ...existingRoute, orderIds: remainingExistingIds });
+        if (oldTotals.totalJabas > 0 || existingRoute.containerVale) {
+          const oldDriver = users.find(u => u.uid === existingRoute.driverId);
+          await syncRouteContainerMovement({
+            route: { ...existingRoute, orderIds: remainingExistingIds },
+            driver: oldDriver,
+            units,
+            movements,
+            operatorProfile: profile,
+            jvCount: oldTotals.totalJv,
+            jnCount: oldTotals.totalJn,
+            notes: 'Actualizado al transferir pedido a otra ruta'
+          });
+        }
       }
 
       const order = orders.find(o => o.id === orderId);
@@ -300,12 +321,32 @@ export function DispatcherView({
 
       await updateDoc(doc(db, 'orders', orderId), orderUpdates);
 
+      const newOrderIds = route.orderIds.includes(orderId) ? route.orderIds : [...route.orderIds, orderId];
       if (!route.orderIds.includes(orderId)) {
         await updateDoc(doc(db, 'routes', routeId), {
-          orderIds: [...route.orderIds, orderId],
+          orderIds: newOrderIds,
           updatedAt: serverTimestamp()
         });
       }
+
+      // Recalculate route container totals including the added order
+      const updatedRouteOrders = orders.map(o => o.id === orderId ? { ...o, ...orderUpdates } as Order : o);
+      const newTotals = calculateRouteContainerTotals(routeId, updatedRouteOrders, undefined, { ...route, orderIds: newOrderIds });
+
+      if (newTotals.totalJabas > 0 || route.containerVale) {
+        const assignedDriver = users.find(u => u.uid === route.driverId);
+        await syncRouteContainerMovement({
+          route: { ...route, orderIds: newOrderIds },
+          driver: assignedDriver,
+          units,
+          movements,
+          operatorProfile: profile,
+          jvCount: newTotals.totalJv,
+          jnCount: newTotals.totalJn,
+          notes: 'Actualizado al agregar pedido a la ruta'
+        });
+      }
+
       showToast('Pedido agregado a la ruta', 'success');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
@@ -323,10 +364,30 @@ export function DispatcherView({
         onboarded: false
       });
 
+      const updatedOrderIds = route.orderIds.filter(id => id !== orderId);
       await updateDoc(doc(db, 'routes', routeId), {
-        orderIds: route.orderIds.filter(id => id !== orderId),
+        orderIds: updatedOrderIds,
         updatedAt: serverTimestamp()
       });
+
+      // Recalculate route container totals after removing order
+      const remainingOrders = orders.filter(o => updatedOrderIds.includes(o.id));
+      const remainingTotals = calculateRouteContainerTotals(routeId, remainingOrders, undefined, { ...route, orderIds: updatedOrderIds });
+
+      if (remainingTotals.totalJabas > 0 || route.containerVale) {
+        const assignedDriver = users.find(u => u.uid === route.driverId);
+        await syncRouteContainerMovement({
+          route: { ...route, orderIds: updatedOrderIds },
+          driver: assignedDriver,
+          units,
+          movements,
+          operatorProfile: profile,
+          jvCount: remainingTotals.totalJv,
+          jnCount: remainingTotals.totalJn,
+          notes: 'Actualizado al remover pedido de la ruta'
+        });
+      }
+
       showToast('Pedido removido de la ruta', 'success');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);

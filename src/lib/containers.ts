@@ -16,6 +16,7 @@ export interface SyncContainerMovementParams {
   route: DeliveryRoute;
   driver?: UserProfile | null;
   units: Unit[];
+  movements?: ContainerMovement[];
   operatorProfile: UserProfile;
   jvCount: number;
   jnCount: number;
@@ -51,14 +52,20 @@ export function getOrderContainerSummary(order: Order) {
   const blackJabaItems = order.items.filter(item => isBlackJaba(item.packaging));
   const jabaItems = order.items.filter(item => isJabaPackaging(item.packaging));
   const bagItems = order.items.filter(item => !item.packaging || item.packaging === 'bolsa');
-  const hasJaba = jabaItems.length > 0 || (order.jvCount && order.jvCount > 0) || (order.jnCount && order.jnCount > 0);
   
-  const jvCount = order.jvCount !== undefined 
-    ? order.jvCount 
-    : (greenJabaItems.length > 0 ? 1 : 0);
-  const jnCount = order.jnCount !== undefined 
-    ? order.jnCount 
-    : (blackJabaItems.length > 0 ? 1 : 0);
+  // Determine JV count: if positive saved count, use it; else if green jaba items exist, count them
+  let jvCount = order.jvCount ?? 0;
+  if (jvCount <= 0 && greenJabaItems.length > 0) {
+    jvCount = Math.max(1, greenJabaItems.length);
+  }
+
+  // Determine JN count: if positive saved count, use it; else if black jaba items exist, count them
+  let jnCount = order.jnCount ?? 0;
+  if (jnCount <= 0 && blackJabaItems.length > 0) {
+    jnCount = Math.max(1, blackJabaItems.length);
+  }
+
+  const hasJaba = jvCount > 0 || jnCount > 0 || jabaItems.length > 0 || !!order.hasJaba;
 
   return {
     hasJaba,
@@ -69,26 +76,57 @@ export function getOrderContainerSummary(order: Order) {
     jabaItemCount: jabaItems.length,
     greenItemCount: greenJabaItems.length,
     blackItemCount: blackJabaItems.length,
-    jvCount,
-    jnCount,
+    jvCount: Math.max(0, jvCount),
+    jnCount: Math.max(0, jnCount),
     totalItems: order.items.length
   };
 }
 
 /**
+ * Busca si el chofer ya tiene un ContainerMovement abierto (activo o cargando) SIN CERRAR,
+ * distinto al movimiento que se está por crear/actualizar. Si lo encuentra, lo marca 'pantano'
+ * junto con su unidad. Debe llamarse antes de crear o reabrir un vale para ese chofer,
+ * sin importar si el vale se origina desde Karey (manual) o desde el flujo de carga (automático).
+ */
+export async function detectAndFlagPantano(
+  driverId: string,
+  movements: ContainerMovement[],
+  excludeMovementId?: string
+): Promise<void> {
+  const prevOpen = movements.find(
+    m => m.driverId === driverId &&
+    (m.status === 'active' || m.status === 'loading') &&
+    m.id !== excludeMovementId
+  );
+  if (!prevOpen) return;
+  await updateDoc(doc(db, 'containerMovements', prevOpen.id), {
+    status: 'pantano',
+    updatedAt: serverTimestamp()
+  });
+  if (prevOpen.unitId) {
+    await updateDoc(doc(db, 'units', prevOpen.unitId), {
+      status: 'in_pantano',
+      updatedAt: serverTimestamp()
+    });
+  }
+}
+
+/**
  * Calculates the exact aggregate jvCount and jnCount for a route given all orders,
- * optionally applying an updated single order override.
+ * optionally applying an updated single order override and checking route.orderIds.
  */
 export function calculateRouteContainerTotals(
   routeId: string,
   allOrders: Order[],
-  overrideOrder?: { id: string; jvCount: number; jnCount: number }
+  overrideOrder?: { id: string; jvCount: number; jnCount: number },
+  route?: DeliveryRoute
 ): { totalJv: number; totalJn: number; totalJabas: number } {
   let totalJv = 0;
   let totalJn = 0;
 
   for (const order of allOrders) {
-    if (order.routeId !== routeId) continue;
+    const isOrderInRoute = order.routeId === routeId || (route && route.orderIds && route.orderIds.includes(order.id));
+    if (!isOrderInRoute) continue;
     if (order.status === 'cancelled') continue;
 
     if (overrideOrder && order.id === overrideOrder.id) {
@@ -102,7 +140,8 @@ export function calculateRouteContainerTotals(
   }
 
   // If overrideOrder is provided and wasn't found in allOrders
-  if (overrideOrder && !allOrders.some(o => o.id === overrideOrder.id && o.routeId === routeId)) {
+  const foundInAll = allOrders.some(o => o.id === overrideOrder?.id && (o.routeId === routeId || (route && route.orderIds && route.orderIds.includes(o.id))));
+  if (overrideOrder && !foundInAll) {
     totalJv += Math.max(0, overrideOrder.jvCount || 0);
     totalJn += Math.max(0, overrideOrder.jnCount || 0);
   }
@@ -122,6 +161,7 @@ export async function syncRouteContainerMovement({
   route,
   driver,
   units,
+  movements,
   operatorProfile,
   jvCount,
   jnCount,
@@ -153,25 +193,39 @@ export async function syncRouteContainerMovement({
   let existingMovementDocId: string | null = null;
   let existingMovement: ContainerMovement | null = null;
 
-  try {
-    const movQuery = query(
-      collection(db, 'containerMovements'),
-      where('routeId', '==', route.id)
+  // First check in-memory movements array if available
+  if (movements && movements.length > 0) {
+    const localMatch = movements.find(m => 
+      (m.routeId === route.id && (m.status === 'active' || m.status === 'loading' || m.status === 'pantano')) ||
+      (matchedUnit && m.unitId === matchedUnit.id && (m.status === 'active' || m.status === 'loading'))
     );
-    const movSnap = await getDocs(movQuery);
-    
-    if (!movSnap.empty) {
-      const activeDoc = movSnap.docs.find(d => {
-        const data = d.data();
-        return data.status === 'active' || data.status === 'loading' || data.status === 'pantano';
-      });
-      if (activeDoc) {
-        existingMovementDocId = activeDoc.id;
-        existingMovement = { id: activeDoc.id, ...activeDoc.data() } as ContainerMovement;
-      }
+    if (localMatch) {
+      existingMovementDocId = localMatch.id;
+      existingMovement = localMatch;
     }
-  } catch (err) {
-    console.warn('Error querying existing container movement:', err);
+  }
+
+  if (!existingMovementDocId) {
+    try {
+      const movQuery = query(
+        collection(db, 'containerMovements'),
+        where('routeId', '==', route.id)
+      );
+      const movSnap = await getDocs(movQuery);
+      
+      if (!movSnap.empty) {
+        const activeDoc = movSnap.docs.find(d => {
+          const data = d.data();
+          return data.status === 'active' || data.status === 'loading' || data.status === 'pantano';
+        });
+        if (activeDoc) {
+          existingMovementDocId = activeDoc.id;
+          existingMovement = { id: activeDoc.id, ...activeDoc.data() } as ContainerMovement;
+        }
+      }
+    } catch (err) {
+      console.warn('Error querying existing container movement:', err);
+    }
   }
 
   const driverName = driver?.name || route.assignedByName || 'Chofer Asignado';
@@ -220,6 +274,11 @@ export async function syncRouteContainerMovement({
 
     return existingMovementDocId;
   } else if (totalJabas > 0) {
+    // Check if driver has any other open movement without closing and flag as pantano
+    if (movements && movements.length > 0) {
+      await detectAndFlagPantano(route.driverId, movements, undefined);
+    }
+
     // Generate clean unique folio
     const cleanUnit = (route.unitNumber || 'U').replace(/[^a-zA-Z0-9]/g, '').slice(-4).toUpperCase();
     const timeSuffix = Date.now().toString().slice(-4);

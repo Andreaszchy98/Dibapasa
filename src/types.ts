@@ -39,6 +39,7 @@ export interface Product {
   isDeleted?: boolean;
   isHidden?: boolean;
   piecesPerJaba?: number;
+  packaging?: 'bolsa' | 'jaba' | 'jaba_verde' | 'jaba_negra';
 }
 
 export interface InventoryRequest {

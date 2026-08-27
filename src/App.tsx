@@ -16,6 +16,7 @@ import { generateInvoicePDF } from './lib/invoice';
 import { fileToBase64, compressImage, compressImageToBlob, transformImageUrl, sortOrdersByWindowAndDistance } from './lib/utils';
 import { validateStockAvailability } from './lib/inventory';
 import { calculateOrderPricing } from './lib/orders';
+import { calculateRouteContainerTotals, syncRouteContainerMovement } from './lib/containers';
 
 // Modular Views
 import {
@@ -868,7 +869,8 @@ export default function App() {
         quantity: qty,
         price: p?.price || 0,
         unit: p?.unit || 'Paq',
-        approxWeight: p?.approxWeight || 0
+        approxWeight: p?.approxWeight || 0,
+        packaging: p?.packaging || 'bolsa'
       };
     });
 
@@ -878,6 +880,18 @@ export default function App() {
 
     const isStoreSale = isStoreOrdering || profile.role === 'store_sales';
 
+    // Calculate initial container counts
+    const greenCount = orderItems.filter(it => it.packaging === 'jaba_verde' || it.packaging === 'jaba').length;
+    const blackCount = orderItems.filter(it => it.packaging === 'jaba_negra').length;
+    const orderJv = greenCount > 0 ? Math.max(1, greenCount) : 0;
+    const orderJn = blackCount > 0 ? Math.max(1, blackCount) : 0;
+    const orderHasJaba = orderJv > 0 || orderJn > 0;
+
+    // Find driver's active route if placing order from driver view
+    const activeDriverRoute = isDriverOrdering 
+      ? allRoutes.find(r => r.driverId === profile.uid && (r.status === 'in_progress' || r.status === 'active'))
+      : undefined;
+
     const newOrder: Omit<Order, 'id'> = {
       userId: (isDriverOrdering || isStoreSale) ? `${isDriverOrdering ? 'driver' : 'store'}-placed` : (user?.uid || 'unknown'),
       userName: (isDriverOrdering || isStoreSale) ? (recipientName || 'Cliente') : (profile.name || 'Usuario'),
@@ -885,7 +899,13 @@ export default function App() {
       userPhone: (isDriverOrdering || isStoreSale) ? '' : (profile.phone || ''),
       items: orderItems || [],
       total: pricing.total,
-      status: isStoreSale ? 'processing' : 'pending',
+      status: isDriverOrdering ? 'shipped' : (isStoreSale ? 'processing' : 'pending'),
+      onboarded: isDriverOrdering ? true : false,
+      ...(isDriverOrdering && profile?.uid ? { driverId: profile.uid } : {}),
+      ...(activeDriverRoute ? { routeId: activeDriverRoute.id } : {}),
+      jvCount: orderJv,
+      jnCount: orderJn,
+      hasJaba: orderHasJaba,
       type: isStoreSale ? 'pickup' : (type || 'delivery'),
       pickupCode: pickupCode || 'ERROR', 
       createdAt: serverTimestamp(),
@@ -914,6 +934,35 @@ export default function App() {
         : await addDoc(collection(db, 'orders'), newOrder);
         
       const finalOrder = { id: docRef.id, ...newOrder };
+
+      // If driver placed on route, attach order to the route and sync the container movement
+      if (isDriverOrdering && activeDriverRoute) {
+        const updatedOrderIds = activeDriverRoute.orderIds.includes(docRef.id) 
+          ? activeDriverRoute.orderIds 
+          : [...activeDriverRoute.orderIds, docRef.id];
+        
+        await updateDoc(doc(db, 'routes', activeDriverRoute.id), {
+          orderIds: updatedOrderIds,
+          updatedAt: serverTimestamp()
+        });
+
+        const updatedAllOrders = [...allOrders, finalOrder as Order];
+        const routeTotals = calculateRouteContainerTotals(activeDriverRoute.id, updatedAllOrders, undefined, { ...activeDriverRoute, orderIds: updatedOrderIds });
+
+        if (routeTotals.totalJabas > 0 || activeDriverRoute.containerVale) {
+          await syncRouteContainerMovement({
+            route: { ...activeDriverRoute, orderIds: updatedOrderIds },
+            driver: profile,
+            units,
+            movements: containerMovements,
+            operatorProfile: profile,
+            jvCount: routeTotals.totalJv,
+            jnCount: routeTotals.totalJn,
+            notes: 'Actualizado automáticamente al registrar venta en ruta'
+          });
+        }
+      }
+
       setCart({});
       if (isDriverOrdering) {
         setIsDriverOrdering(false);
@@ -1843,6 +1892,10 @@ export default function App() {
               orders={allOrders} 
               users={allUsers}
               products={products}
+              routes={allRoutes}
+              units={units}
+              movements={containerMovements}
+              profile={profile || undefined}
               filter={adminOrderFilter}
               selectedDate={adminSelectedDate}
               onBack={() => {

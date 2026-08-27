@@ -36,7 +36,7 @@ export function DriverView({
   const activeRoutes = myRoutes.filter(r => {
     if (r.status === 'in_progress') return true;
     if (r.status === 'active') {
-      const routeOrders = orders.filter(o => r.orderIds.includes(o.id));
+      const routeOrders = orders.filter(o => (r.orderIds?.includes(o.id) || o.routeId === r.id) && o.status !== 'cancelled');
       if (routeOrders.length === 0) return false;
       return routeOrders.every(o => o.onboarded === true);
     }
@@ -46,13 +46,13 @@ export function DriverView({
 
   const readyOrders = orders.filter(o => {
     if (o.status !== 'shipped' || o.onboarded !== true) return false;
-    const route = activeRoutes.find(r => r.id === o.routeId);
+    const route = activeRoutes.find(r => r.id === o.routeId || r.orderIds?.includes(o.id));
     return !!route;
   });
 
   const historyOrders = orders.filter(o => {
     if (o.status !== 'delivered') return false;
-    const route = finishedRoutes.find(r => r.id === o.routeId) || activeRoutes.find(r => r.id === o.routeId);
+    const route = finishedRoutes.find(r => r.id === o.routeId || r.orderIds?.includes(o.id)) || activeRoutes.find(r => r.id === o.routeId || r.orderIds?.includes(o.id));
     return !!route;
   }).slice(0, 50);
 
@@ -234,8 +234,14 @@ export function DriverView({
               </div>
             ) : (
               activeRoutes.map(route => {
-                const totalJv = route.containerVale?.jvOut || 0;
-                const totalJn = route.containerVale?.jnOut || 0;
+                const routeActiveOrders = orders.filter(o => (route.orderIds?.includes(o.id) || o.routeId === route.id) && o.status !== 'cancelled');
+                const routePendingOrders = routeActiveOrders.filter(o => o.status !== 'delivered');
+                const countToShow = routePendingOrders.length;
+
+                const activeJv = routeActiveOrders.reduce((sum, o) => sum + (o.jvCount || 0), 0);
+                const activeJn = routeActiveOrders.reduce((sum, o) => sum + (o.jnCount || 0), 0);
+                const totalJv = route.containerVale ? route.containerVale.jvOut : activeJv;
+                const totalJn = route.containerVale ? route.containerVale.jnOut : activeJn;
                 const totalJabas = totalJv + totalJn;
                 const matchedUnit = units.find(u => u.number?.trim().toUpperCase() === (route.unitNumber || '').trim().toUpperCase());
 
@@ -285,7 +291,7 @@ export function DriverView({
                         variant={route.status === 'in_progress' ? 'outline' : 'default'}
                         onClick={() => setSelectedRouteId(route.id)}
                       >
-                        Ver {route.orderIds?.length || 0} Pedidos y Clientes
+                        Ver {countToShow} {countToShow === 1 ? 'Pedido y Cliente' : 'Pedidos y Clientes'}
                       </Button>
                       {route.status === 'active' && (
                         <Button className="bg-green-600 hover:bg-green-700 text-xs h-9" onClick={() => startRoute(route)}>
@@ -326,22 +332,34 @@ export function DriverView({
               </div>
 
               {/* Driver Vale digital container summary banner */}
-              {selectedRoute && (selectedRoute.containerVale?.jvOut || selectedRoute.containerVale?.jnOut) ? (
-                <div className="bg-amber-50 rounded-2xl p-3.5 border border-amber-200 space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-amber-950 flex items-center gap-1.5">
-                      <ShieldCheck className="w-4 h-4 text-amber-700" />
-                      Vale Digital de Jabas en Unidad
-                    </span>
-                    <span className="text-[10px] font-bold text-amber-800 bg-amber-200/70 px-2 py-0.5 rounded-full">
-                      {(selectedRoute.containerVale?.jvOut || 0) + (selectedRoute.containerVale?.jnOut || 0)} Jabas Totales
-                    </span>
+              {(() => {
+                if (!selectedRoute) return null;
+                const selRouteActiveOrders = orders.filter(o => (selectedRoute.orderIds?.includes(o.id) || o.routeId === selectedRoute.id) && o.status !== 'cancelled');
+                const selActiveJv = selRouteActiveOrders.reduce((sum, o) => sum + (o.jvCount || 0), 0);
+                const selActiveJn = selRouteActiveOrders.reduce((sum, o) => sum + (o.jnCount || 0), 0);
+                const selTotalJv = selectedRoute.containerVale ? selectedRoute.containerVale.jvOut : selActiveJv;
+                const selTotalJn = selectedRoute.containerVale ? selectedRoute.containerVale.jnOut : selActiveJn;
+                const selTotalJabas = selTotalJv + selTotalJn;
+
+                if (selTotalJabas === 0) return null;
+
+                return (
+                  <div className="bg-amber-50 rounded-2xl p-3.5 border border-amber-200 space-y-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-amber-700" />
+                        Vale Digital de Jabas en Unidad
+                      </span>
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-200/70 px-2 py-0.5 rounded-full">
+                        {selTotalJabas} Jabas Totales
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-amber-900">
+                      Transportas <strong className="text-emerald-800">{selTotalJv} Jabas Verdes (JV)</strong> y <strong className="text-gray-900">{selTotalJn} Negras (JN)</strong>. Inventario Karey conciliará este mismo vale al finalizar tu viaje.
+                    </p>
                   </div>
-                  <p className="text-[11px] text-amber-900">
-                    Transportas <strong className="text-emerald-800">{selectedRoute.containerVale?.jvOut || 0} Jabas Verdes (JV)</strong> y <strong className="text-gray-900">{selectedRoute.containerVale?.jnOut || 0} Negras (JN)</strong>. Inventario Karey conciliará este mismo vale al finalizar tu viaje.
-                  </p>
-                </div>
-              ) : null}
+                );
+              })()}
 
               {selectedRoute?.status === 'active' ? (
                 <Button className="w-full bg-green-500 hover:bg-green-600 h-10 font-bold text-white" onClick={() => startRoute(selectedRoute)}>

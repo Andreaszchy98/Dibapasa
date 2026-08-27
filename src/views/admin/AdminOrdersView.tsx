@@ -1,18 +1,23 @@
 import { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronRight, RotateCcw, Package, MapPin, Calendar, Loader2, X, Truck, FileText } from 'lucide-react';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
-import { Order, UserProfile, Product } from '../../types';
+import { Order, UserProfile, Product, DeliveryRoute, Unit, ContainerMovement } from '../../types';
 import { generateInvoicePDF } from '../../lib/invoice';
 import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
+import { calculateRouteContainerTotals, syncRouteContainerMovement } from '../../lib/containers';
 
 export function AdminOrdersView({ 
   orders, 
   users, 
   products, 
+  routes = [],
+  units = [],
+  movements = [],
+  profile,
   filter = 'all', 
   selectedDate,
   onBack,
@@ -25,6 +30,10 @@ export function AdminOrdersView({
   orders: Order[]; 
   users: UserProfile[]; 
   products: Product[]; 
+  routes?: DeliveryRoute[];
+  units?: Unit[];
+  movements?: ContainerMovement[];
+  profile?: UserProfile;
   filter?: Order['status'] | 'all'; 
   selectedDate: string; 
   onBack: () => void; 
@@ -60,7 +69,38 @@ export function AdminOrdersView({
 
   const cancelOrder = async (order: Order) => {
     try {
-      await updateDoc(doc(db, 'orders', order.id), { status: 'cancelled' });
+      await updateDoc(doc(db, 'orders', order.id), { 
+        status: 'cancelled',
+        updatedAt: serverTimestamp()
+      });
+
+      // If the order was assigned to a route, remove it from the route and update container counts
+      const assignedRoute = routes.find(r => r.orderIds?.includes(order.id) || (order.routeId && r.id === order.routeId));
+      if (assignedRoute) {
+        const remainingOrderIds = (assignedRoute.orderIds || []).filter(id => id !== order.id);
+        await updateDoc(doc(db, 'routes', assignedRoute.id), {
+          orderIds: remainingOrderIds,
+          updatedAt: serverTimestamp()
+        });
+
+        // Recalculate route container totals after cancellation
+        const remainingOrders = orders.filter(o => remainingOrderIds.includes(o.id) && o.id !== order.id && o.status !== 'cancelled');
+        const newTotals = calculateRouteContainerTotals(assignedRoute.id, remainingOrders, undefined, { ...assignedRoute, orderIds: remainingOrderIds });
+
+        if (newTotals.totalJabas > 0 || assignedRoute.containerVale) {
+          const assignedDriver = users.find(u => u.uid === assignedRoute.driverId);
+          await syncRouteContainerMovement({
+            route: { ...assignedRoute, orderIds: remainingOrderIds },
+            driver: assignedDriver,
+            units,
+            movements,
+            operatorProfile: profile,
+            jvCount: newTotals.totalJv,
+            jnCount: newTotals.totalJn,
+            notes: 'Actualizado al cancelar pedido'
+          });
+        }
+      }
       
       for (const item of order.items) {
         const product = products.find(p => p.id === item.productId);

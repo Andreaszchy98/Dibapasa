@@ -494,7 +494,7 @@ export function DispatcherView({
               </div>
             ) : (
               routes.filter(r => r.status === 'active').map(route => {
-                const routeOrders = orders.filter(o => route.orderIds.includes(o.id));
+                const routeOrders = orders.filter(o => (route.orderIds?.includes(o.id) || o.routeId === route.id) && o.status !== 'cancelled');
                 const driver = users.find(u => u.uid === route.driverId);
                 return (
                   <div key={route.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">

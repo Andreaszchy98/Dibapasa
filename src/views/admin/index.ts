@@ -9,3 +9,4 @@ export * from './AdminOrdersView';
 export * from './AdminReturnsView';
 export * from './AdminActivityView';
 export * from './AdminUnitsView';
+export * from './AdminSuppliersView';

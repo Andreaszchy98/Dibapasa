@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronRight, Trash2, Loader2, Image, Plus, AlertTriangle, EyeOff, Eye } from 'lucide-react';
+import { ChevronRight, Trash2, Loader2, Image, Plus, AlertTriangle, EyeOff, Eye, Factory } from 'lucide-react';
 import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
 import { ref as sRef, deleteObject } from 'firebase/storage';
 import { db, storage, uploadImage, handleFirestoreError, OperationType } from '../../firebase';
 import { Button, Input } from '../../components/ui';
 import { cn } from '../../components/ui';
-import { Product, Category, ToastType } from '../../types';
+import { Product, Category, ToastType, Supplier } from '../../types';
 import { compressImageToBlob, transformImageUrl } from '../../lib/utils';
+import { INITIAL_SUPPLIERS } from '../../constants';
 
 export function AdminProductFormView({ 
   product, 
   categories, 
+  suppliers = INITIAL_SUPPLIERS,
   onBack, 
   effectiveRole, 
   showToast, 
@@ -20,6 +22,7 @@ export function AdminProductFormView({
 }: { 
   product: Product | null; 
   categories: Category[]; 
+  suppliers?: Supplier[];
   onBack: () => void; 
   effectiveRole: string; 
   showToast: (msg: string, type?: ToastType) => void; 
@@ -30,6 +33,7 @@ export function AdminProductFormView({
   const [name, setName] = useState(product?.name || '');
   const [category, setCategory] = useState(product?.category || categories[0]?.name || '');
   const [subcategory, setSubcategory] = useState(product?.subcategory || '');
+  const [supplierId, setSupplierId] = useState(product?.supplierId || (suppliers.find(s => s.isDefault)?.id || 'sup_karey'));
   const [unit, setUnit] = useState<'Kg' | 'Paq' | 'Pza' | 'Fco' | 'Bolsa' | 'Caja'>(product?.unit || 'Paq');
   const [price, setPrice] = useState(product?.price.toString() || '0');
   const [description, setDescription] = useState(product?.description || '');
@@ -74,10 +78,13 @@ export function AdminProductFormView({
     if (!name || !price) return;
     setIsSaving(true);
     try {
+      const selectedSup = suppliers.find(s => s.id === supplierId);
       const productData: Partial<Product> = {
         name: name || 'S/N',
         category: category || 'Sin Categoría',
         subcategory: subcategory || '',
+        supplierId: supplierId || null as any,
+        supplierName: selectedSup ? selectedSup.name : 'Karey',
         unit: unit || 'Paq',
         price: Number(price) || 0,
         description: description || '',
@@ -205,11 +212,11 @@ export function AdminProductFormView({
           <Input value={name} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)} placeholder="Nombre del producto" disabled={!isAdmin} />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="space-y-2">
             <label className="text-xs font-bold text-gray-400 uppercase ml-1">Categoría</label>
             <select 
-              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600/20 focus:border-red-600 transition-all disabled:bg-gray-50"
+              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600/20 focus:border-red-600 transition-all disabled:bg-gray-50 text-xs"
               value={category}
               onChange={(e) => {
                 setCategory(e.target.value);
@@ -225,7 +232,7 @@ export function AdminProductFormView({
           <div className="space-y-2">
             <label className="text-xs font-bold text-gray-400 uppercase ml-1">Subcategoría</label>
             <select 
-              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600/20 focus:border-red-600 transition-all disabled:bg-gray-50"
+              className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-600/20 focus:border-red-600 transition-all disabled:bg-gray-50 text-xs"
               value={subcategory}
               onChange={(e) => setSubcategory(e.target.value)}
               disabled={!isAdmin || !selectedCategoryData || selectedCategoryData.subcategories.length === 0}
@@ -233,6 +240,25 @@ export function AdminProductFormView({
               <option value="">Ninguna</option>
               {selectedCategoryData?.subcategories.map(sub => (
                 <option key={sub} value={sub}>{sub}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-teal-700 uppercase ml-1 flex items-center gap-1">
+              <Factory className="w-3.5 h-3.5 text-teal-600" />
+              Proveedor
+            </label>
+            <select 
+              className="w-full px-4 py-2 border border-teal-200 bg-teal-50/20 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-600/20 focus:border-teal-600 transition-all disabled:bg-gray-50 text-xs font-medium text-gray-900"
+              value={supplierId}
+              onChange={(e) => setSupplierId(e.target.value)}
+              disabled={!isAdmin}
+            >
+              <option value="">-- Sin asignar / Karey Base --</option>
+              {suppliers.map(sup => (
+                <option key={sup.id} value={sup.id}>
+                  {sup.name} {sup.code ? `(${sup.code})` : ''} {sup.isDefault ? '• Principal' : ''}
+                </option>
               ))}
             </select>
           </div>

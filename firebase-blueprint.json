@@ -162,6 +162,23 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "driverId", "unitNumber", "status", "orderIds", "createdAt"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Product suppliers catalog",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "contactName": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "address": { "type": "string" },
+        "categoriesSupplied": { "type": "array", "items": { "type": "string" } },
+        "notes": { "type": "string" },
+        "isDefault": { "type": "boolean" }
+      },
+      "required": ["name"]
     }
   },
   "firestore": {
@@ -173,6 +190,7 @@
     "/settings/{settingId}": { "schema": "Settings", "description": "App settings" },
     "/categories/{categoryId}": { "schema": "Category", "description": "Product categories" },
     "/returns/{returnId}": { "schema": "Return", "description": "Customer return requests" },
-    "/routes/{routeId}": { "schema": "DeliveryRoute", "description": "Delivery routes and logistical assignments" }
+    "/routes/{routeId}": { "schema": "DeliveryRoute", "description": "Delivery routes and logistical assignments" },
+    "/suppliers/{supplierId}": { "schema": "Supplier", "description": "Supplier catalog" }
   }
 }

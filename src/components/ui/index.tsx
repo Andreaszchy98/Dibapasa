@@ -28,7 +28,12 @@ export const Button: React.FC<ButtonProps> = ({ className, variant = 'primary', 
 
   return (
     <button 
-      className={cn('rounded-lg font-medium transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none', variants[variant] || variants.primary, sizes[size] || sizes.md, className)} 
+      className={cn(
+        'inline-flex items-center justify-center font-medium transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none select-none whitespace-nowrap', 
+        variants[variant] || variants.primary, 
+        sizes[size] || sizes.md, 
+        className
+      )} 
       {...props} 
     />
   );

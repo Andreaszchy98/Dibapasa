@@ -176,9 +176,9 @@ export function AdminOrdersView({
         </Button>
       </div>
 
-      <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredOrders.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-3xl border border-dashed border-gray-200">
+          <div className="col-span-full text-center py-12 bg-white rounded-3xl border border-dashed border-gray-200">
             <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
             <p className="text-gray-500 font-medium">No hay pedidos en esta sección</p>
           </div>
@@ -187,7 +187,7 @@ export function AdminOrdersView({
             <button 
               key={order.id} 
               onClick={() => setSelectedOrder(order)}
-              className="w-full text-left bg-white rounded-2xl p-4 border border-gray-100 shadow-sm space-y-3 hover:border-[#0056b3] transition-colors"
+              className="w-full text-left bg-white rounded-2xl p-4 border border-gray-100 shadow-sm space-y-3 hover:border-[#0056b3] hover:shadow-md transition-all flex flex-col justify-between"
             >
               <div className="flex justify-between items-start">
                 <div>

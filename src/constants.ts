@@ -1,8 +1,84 @@
-import { Product } from './types';
+import { Product, Supplier } from './types';
 
 export const CATEGORIES = ['Todos', 'Jamones', 'Salchichas', 'Chorizos', 'Tocinos', 'Quesos', 'Antojos', 'Chilorio'];
 
-export const INITIAL_PRODUCTS: Product[] = [
+export const INITIAL_SUPPLIERS: Supplier[] = [
+  {
+    id: 'sup_karey',
+    name: 'Karey (Embutidos y Carnes Frías)',
+    code: 'KAREY',
+    contactName: 'Planta Matriz Karey',
+    phone: '800-527-3900',
+    email: 'pedidos@karey.com.mx',
+    address: 'Parque Industrial, Matriz',
+    categoriesSupplied: ['Jamones', 'Salchichas', 'Chorizos', 'Tocinos', 'Antojos', 'Chilorio'],
+    isDefault: true,
+    notes: 'Proveedor principal y fabricante de toda la línea de embutidos, carnes frías y empaquetados.'
+  },
+  {
+    id: 'sup_santa_rita',
+    name: 'Lácteos Santa Rita (Quesos Menonitas)',
+    code: 'STA_RITA',
+    contactName: 'Distribuidora Santa Rita',
+    phone: '625-581-2200',
+    email: 'ventas@santaritaquesos.com',
+    address: 'Cuauhtémoc, Chihuahua',
+    categoriesSupplied: ['Quesos'],
+    notes: 'Proveedor de Queso Chihuahua Selecto y Menonita Santa Rita (ruedas y barras).'
+  },
+  {
+    id: 'sup_superior',
+    name: 'Quesos Superior & Pomas',
+    code: 'SUP_POMAS',
+    contactName: 'Quesería Superior',
+    phone: '625-582-4400',
+    email: 'contacto@quesossuperior.com',
+    address: 'Colonia Manitoba, Chihuahua',
+    categoriesSupplied: ['Quesos'],
+    notes: 'Proveedor de Queso Superior #7, Superior #2 y Queso Menonita Pomas.'
+  },
+  {
+    id: 'sup_navarro',
+    name: 'Quesería Navarro & Victoria',
+    code: 'NAV_VIC',
+    contactName: 'Distribuidora Navarro',
+    phone: '378-782-1100',
+    email: 'ventas@quesosnavarro.com',
+    address: 'Los Altos de Jalisco / Chihuahua',
+    categoriesSupplied: ['Quesos'],
+    notes: 'Proveedor de Queso Chihuahua Navarro y Queso Victoria.'
+  },
+  {
+    id: 'sup_volcanes',
+    name: 'Lácteos Los Volcanes & San José',
+    code: 'VOLCANES',
+    contactName: 'Grupo Lácteo Los Volcanes',
+    phone: '55-5804-3000',
+    email: 'atencion@losvolcanes.mx',
+    address: 'Valle de México / Centro',
+    categoriesSupplied: ['Quesos'],
+    notes: 'Proveedor de quesos botaneros, panela, oaxaca y cubicados.'
+  }
+];
+
+export function getInitialSupplierForProduct(name: string, category: string, subcategory?: string): { supplierId: string; supplierName: string } {
+  const n = (name + ' ' + (subcategory || '')).toLowerCase();
+  if (category === 'Quesos') {
+    if (n.includes('santa rita') || n.includes('menonita santa rita')) {
+      return { supplierId: 'sup_santa_rita', supplierName: 'Lácteos Santa Rita (Quesos Menonitas)' };
+    }
+    if (n.includes('superior') || n.includes('pomas')) {
+      return { supplierId: 'sup_superior', supplierName: 'Quesos Superior & Pomas' };
+    }
+    if (n.includes('navarro') || n.includes('victoria')) {
+      return { supplierId: 'sup_navarro', supplierName: 'Quesería Navarro & Victoria' };
+    }
+    return { supplierId: 'sup_volcanes', supplierName: 'Lácteos Los Volcanes & San José' };
+  }
+  return { supplierId: 'sup_karey', supplierName: 'Karey (Embutidos y Carnes Frías)' };
+}
+
+const RAW_INITIAL_PRODUCTS: Product[] = [
   // QUESOS
   {
     id: 'q1',
@@ -913,6 +989,11 @@ export const INITIAL_PRODUCTS: Product[] = [
     imageUrl: 'https://picsum.photos/seed/chr11/400/400'
   }
 ];
+
+export const INITIAL_PRODUCTS: Product[] = RAW_INITIAL_PRODUCTS.map(p => ({
+  ...p,
+  ...getInitialSupplierForProduct(p.name, p.category, p.subcategory)
+}));
 
 export const COLORS = {
   navy: '#001f3f',

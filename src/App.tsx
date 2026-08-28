@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { collection, doc, getDoc, getDocs, setDoc, onSnapshot, query, where, orderBy, addDoc, updateDoc, serverTimestamp, getDocFromServer, deleteDoc, deleteField, limit, startAfter, QuerySnapshot, DocumentData, QueryDocumentSnapshot, Unsubscribe } from 'firebase/firestore';
 import { auth, db, storage, sRef, uploadBytes, getDownloadURL, deleteObject, uploadImage, signInWithGoogle, logout, handleFirestoreError, OperationType, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendEmailVerification, sendPasswordResetEmail, updateProfile } from './firebase';
-import { Product, UserProfile, Order, Page, OrderItem, InventoryRequest, AppNotification, AppSettings, Category, Return, DeliveryRoute, ToastType, UserRole, ReturnSubmitPayload, Unit, ContainerMovement } from './types';
-import { CATEGORIES, INITIAL_PRODUCTS, COLORS, JABA_CONFIG } from './constants';
+import { Product, UserProfile, Order, Page, OrderItem, InventoryRequest, AppNotification, AppSettings, Category, Return, DeliveryRoute, ToastType, UserRole, ReturnSubmitPayload, Unit, ContainerMovement, Supplier } from './types';
+import { CATEGORIES, INITIAL_PRODUCTS, COLORS, JABA_CONFIG, INITIAL_SUPPLIERS } from './constants';
 import { DEFAULT_TENANT_CONFIG, resolveTenantConfig } from './config/tenant';
 import { Search, ShoppingCart, Home as HomeIcon, ClipboardList, History, User as UserIcon, Plus, Minus, ChevronRight, MapPin, CreditCard, CheckCircle2, Loader2, LogOut, Package, Users, ArrowLeft, X, Settings, ShieldCheck, Edit, Check, Bell, AlertTriangle, Trash2, CheckCircle, Truck, Phone, FileText, Image, Tags, Printer, ChevronDown, ChevronUp, Banknote, Mail, Locate, Navigation, Camera, RotateCcw, Calendar, Info, PackageCheck, PackageOpen, Clock, Download, ExternalLink, Store, Eye, EyeOff, RefreshCw, Box } from 'lucide-react';
 import { jsPDF } from 'jspdf';
@@ -30,7 +30,8 @@ import {
   AdminOrdersView,
   AdminReturnsView,
   AdminActivityView,
-  AdminUnitsView
+  AdminUnitsView,
+  AdminSuppliersView
 } from './views/admin';
 import {
   KareyDashboard,
@@ -225,6 +226,17 @@ export default function App() {
     } catch (e) {}
     return CATEGORIES.filter(c => c !== 'Todos').map(name => ({ id: name, name, subcategories: [] }));
   });
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => {
+    try {
+      const cached = localStorage.getItem('dibapasa_cached_suppliers');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return INITIAL_SUPPLIERS;
+  });
+  const [inventoryInitialTab, setInventoryInitialTab] = useState<'management' | 'sold' | 'waste' | 'entries' | 'suppliers'>('management');
   const [settings, setSettings] = useState<AppSettings | null>(() => {
     try {
       const cached = localStorage.getItem('dibapasa_cached_settings');
@@ -446,10 +458,11 @@ export default function App() {
     if (isSyncing) return;
     setIsSyncing(true);
     try {
-      const [productsSnap, categoriesSnap, settingsSnap] = await Promise.all([
+      const [productsSnap, categoriesSnap, settingsSnap, suppliersSnap] = await Promise.all([
         getDocs(collection(db, 'products')),
         getDocs(collection(db, 'categories')),
-        getDoc(doc(db, 'settings', 'app'))
+        getDoc(doc(db, 'settings', 'app')),
+        getDocs(collection(db, 'suppliers'))
       ]);
 
       if (!productsSnap.empty) {
@@ -463,6 +476,12 @@ export default function App() {
         const cats = categoriesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Category));
         setCategories(cats);
         try { localStorage.setItem('dibapasa_cached_categories', JSON.stringify(cats)); } catch (e) {}
+      }
+
+      if (!suppliersSnap.empty) {
+        const sups = suppliersSnap.docs.map(d => ({ id: d.id, ...d.data() } as Supplier));
+        setSuppliers(sups);
+        try { localStorage.setItem('dibapasa_cached_suppliers', JSON.stringify(sups)); } catch (e) {}
       }
 
       if (settingsSnap.exists()) {
@@ -561,42 +580,6 @@ export default function App() {
       } catch (error) {
         console.error("Error loading users:", error);
       }
-    }
-  };
-
-  const seedAppData = async () => {
-    if (!profile || profile.role !== 'admin') return;
-    try {
-      showToast('Sembrando datos...', 'info');
-      // Categories
-      const categoriesSnap = await getDocs(collection(db, 'categories'));
-      if (categoriesSnap.empty) {
-        const defaultCats = CATEGORIES.filter(c => c !== 'Todos').map(name => ({
-          name,
-          subcategories: []
-        }));
-        for (const cat of defaultCats) {
-          await addDoc(collection(db, 'categories'), cat);
-        }
-      }
-      
-      // Products
-      const snapshot = await getDocs(collection(db, 'products'));
-      const existingIds = snapshot.docs.map(d => d.id);
-      const missingProducts = INITIAL_PRODUCTS.filter(p => !existingIds.includes(p.id));
-      for (const p of missingProducts) {
-        const { id, ...data } = p;
-        await setDoc(doc(db, 'products', id), data);
-      }
-      
-      showToast('Datos sembrados correctamente', 'success');
-      // Refresh
-      const catsSnap = await getDocs(collection(db, 'categories'));
-      setCategories(catsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Category)));
-      setHasLoadedAllProducts(false);
-      await loadAllProducts();
-    } catch (error) {
-      showToast('Error al sembrar datos', 'error');
     }
   };
 
@@ -1669,8 +1652,9 @@ export default function App() {
                 setCurrentPage('admin-orders');
               }}
               onUsersClick={() => setCurrentPage('admin-users')}
-              onInventoryTrackingClick={(p) => {
+              onInventoryTrackingClick={(p, tab) => {
                 setAdminPeriod(p);
+                setInventoryInitialTab(tab || 'management');
                 setCurrentPage('admin-inventory-tracking');
               }}
               onReturnsClick={() => setCurrentPage('admin-returns')}
@@ -1686,7 +1670,6 @@ export default function App() {
                 await loadAuthenticatedData();
                 showToast('Datos actualizados', 'success');
               }}
-              onSeedData={seedAppData}
             />
           )}
 
@@ -1827,6 +1810,8 @@ export default function App() {
               requests={inventoryRequests}
               products={products}
               profile={profile}
+              suppliers={suppliers}
+              initialTab={inventoryInitialTab}
               selectedDate={adminSelectedDate}
               onDateChange={setAdminSelectedDate}
               period={adminPeriod}
@@ -1847,6 +1832,27 @@ export default function App() {
                 setSelectedProductForEdit(null);
                 setCurrentPage('admin-product-edit' as any);
               } : undefined}
+              onSupplierSaved={(savedSupplier) => {
+                setSuppliers(prev => {
+                  const idx = prev.findIndex(s => s.id === savedSupplier.id);
+                  let next;
+                  if (idx >= 0) {
+                    next = [...prev];
+                    next[idx] = savedSupplier;
+                  } else {
+                    next = [...prev, savedSupplier];
+                  }
+                  try { localStorage.setItem('dibapasa_cached_suppliers', JSON.stringify(next)); } catch (e) {}
+                  return next;
+                });
+              }}
+              onSupplierDeleted={(deletedId) => {
+                setSuppliers(prev => {
+                  const next = prev.filter(s => s.id !== deletedId);
+                  try { localStorage.setItem('dibapasa_cached_suppliers', JSON.stringify(next)); } catch (e) {}
+                  return next;
+                });
+              }}
               onRefresh={async () => {
                 await loadAuthenticatedData();
                 showToast('Inventario actualizado', 'success');
@@ -2063,6 +2069,7 @@ export default function App() {
               <InventoryView 
                 products={products} 
                 profile={profile} 
+                suppliers={suppliers}
                 onBack={() => setCurrentPage('home')} 
                 onEditProduct={effectiveRole === 'admin' ? (p) => {
                   setSelectedProductForEdit(p);
@@ -2095,6 +2102,7 @@ export default function App() {
             <AdminProductFormView 
               product={selectedProductForEdit} 
               categories={categories}
+              suppliers={suppliers}
               effectiveRole={effectiveRole}
               showToast={showToast}
               onProductSaved={(savedProduct: Product) => {

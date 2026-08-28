@@ -16,6 +16,21 @@ export type UserRole =
   | 'inventory'
   | 'karey_inventory';
 
+export interface Supplier {
+  id: string;
+  name: string;
+  code?: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  categoriesSupplied?: string[];
+  notes?: string;
+  isDefault?: boolean;
+  createdAt?: FirestoreTimestamp;
+  updatedAt?: FirestoreTimestamp;
+}
+
 export interface Category {
   id: string;
   name: string;
@@ -29,6 +44,8 @@ export interface Product {
   name: string;
   category: string;
   subcategory?: string;
+  supplierId?: string;
+  supplierName?: string;
   price: number;
   description?: string;
   imageUrl?: string;
@@ -53,6 +70,9 @@ export interface InventoryRequest {
   status: 'pending' | 'approved' | 'rejected';
   requestedBy: string;
   requestedByName: string;
+  supplierId?: string;
+  supplierName?: string;
+  invoiceOrDocNumber?: string;
   createdAt: FirestoreTimestamp;
 }
 

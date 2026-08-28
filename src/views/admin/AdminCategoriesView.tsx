@@ -140,9 +140,9 @@ export function AdminCategoriesView({
           </Button>
         </div>
 
-        <div className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {categories.map(cat => (
-            <div key={cat.id} className="border border-gray-100 rounded-2xl p-4 space-y-4">
+            <div key={cat.id} className="border border-gray-100 rounded-2xl p-4 space-y-4 bg-gray-50/50 hover:bg-white hover:shadow-sm transition-all">
               <div className="flex items-center justify-between gap-2">
                 {editingCategory?.id === cat.id ? (
                   <div className="flex gap-2 flex-1">

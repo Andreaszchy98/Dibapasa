@@ -233,7 +233,8 @@ export function DriverView({
                 <p className="text-sm text-gray-400">No tienes rutas asignadas actualmente</p>
               </div>
             ) : (
-              activeRoutes.map(route => {
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {activeRoutes.map(route => {
                 const routeActiveOrders = orders.filter(o => (route.orderIds?.includes(o.id) || o.routeId === route.id) && o.status !== 'cancelled');
                 const routePendingOrders = routeActiveOrders.filter(o => o.status !== 'delivered');
                 const countToShow = routePendingOrders.length;
@@ -301,7 +302,8 @@ export function DriverView({
                     </div>
                   </div>
                 );
-              })
+              })}
+              </div>
             )}
           </div>
         )}
@@ -396,7 +398,8 @@ export function DriverView({
               <p className="text-gray-500 font-medium">No hay pedidos {initialTab === 'pending' ? 'para entregar en esta ruta' : 'en el historial'}</p>
             </div>
           ) : (
-            displayedOrders.map((order, index) => {
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {displayedOrders.map((order, index) => {
               const containerSummary = getOrderContainerSummary(order);
               return (
                 <div 
@@ -431,9 +434,7 @@ export function DriverView({
                     {containerSummary.hasJaba ? (
                       <span className="text-[9px] font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md border border-amber-200 flex items-center gap-1">
                         <Box className="w-2.5 h-2.5 text-amber-700 shrink-0" />
-                        {containerSummary.jvCount > 0 || containerSummary.jnCount > 0
-                          ? `${(containerSummary.jvCount || 0) + (containerSummary.jnCount || 0)} Jaba(s) (${containerSummary.jvCount || 0} JV / ${containerSummary.jnCount || 0} JN)`
-                          : `${containerSummary.jabaItemCount} Prod(s) en Jaba`}
+                        {(containerSummary.jvCount || 0) + (containerSummary.jnCount || 0)} Jaba(s) ({containerSummary.jvCount || 0} JV / {containerSummary.jnCount || 0} JN)
                       </span>
                     ) : (
                       <span className="text-[9px] font-semibold bg-gray-100 text-gray-600 px-2 py-0.5 rounded-md">
@@ -482,7 +483,8 @@ export function DriverView({
                 </div>
               </div>
               );
-            })
+            })}
+            </div>
           )}
         </div>
       )}

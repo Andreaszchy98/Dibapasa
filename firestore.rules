@@ -241,5 +241,10 @@ service cloud.firestore {
       allow create, update: if isKareyInventory() || isAdmin();
       allow delete: if isAdmin();
     }
+
+    match /suppliers/{supplierId} {
+      allow read: if true;
+      allow write: if isAdmin() || isStaff();
+    }
   }
 }

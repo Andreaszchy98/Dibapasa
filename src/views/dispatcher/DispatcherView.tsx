@@ -486,9 +486,9 @@ export function DispatcherView({
             </Button>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {routes.filter(r => r.status === 'active').length === 0 ? (
-              <div className="lg:col-span-2 text-center py-12 bg-white rounded-3xl border border-dashed border-gray-200">
+              <div className="md:col-span-2 xl:col-span-3 text-center py-12 bg-white rounded-3xl border border-dashed border-gray-200">
                 <Truck className="w-12 h-12 text-gray-300 mx-auto mb-3" />
                 <p className="text-gray-500 font-medium">No hay rutas activas</p>
               </div>
@@ -684,7 +684,8 @@ export function DispatcherView({
               <p className="text-gray-500 font-medium">No hay pedidos {initialTab === 'pending' ? 'pendientes' : 'en el historial'}</p>
             </div>
           ) : (
-            displayedOrders.map(order => (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {displayedOrders.map(order => (
               <div key={order.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm space-y-4">
                 <div className="flex justify-between items-start gap-2">
                   <div onClick={() => toggleExpand(order.id)} className="cursor-pointer flex-1 min-w-0">
@@ -890,7 +891,8 @@ export function DispatcherView({
                   </motion.div>
                 )}
               </div>
-            ))
+            ))}
+            </div>
           )}
         </div>
       )}

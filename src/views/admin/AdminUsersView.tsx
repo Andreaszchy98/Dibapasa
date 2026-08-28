@@ -50,25 +50,26 @@ export function AdminUsersView({ users, onBack, onRefresh }: { users: UserProfil
         </Button>
       </div>
 
-      <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {users.map(u => (
-          <div key={u.uid} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center text-[#0056b3] font-bold">
-                {(u.name || 'U').charAt(0)}
+          <div key={u.uid} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm hover:shadow-md transition-shadow flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center font-black shrink-0">
+                {(u.name || 'U').charAt(0).toUpperCase()}
               </div>
-              <div>
-                <h4 className="font-bold text-gray-900 leading-tight">{u.name || 'Usuario'}</h4>
-                <p className="text-[10px] text-gray-500">{u.email}</p>
+              <div className="min-w-0 flex-1">
+                <h4 className="font-bold text-gray-900 text-sm leading-tight truncate">{u.name || 'Usuario'}</h4>
+                <p className="text-xs text-gray-500 truncate">{u.email}</p>
                 <div className="flex gap-1 mt-1">
                   <span className={cn(
-                    "text-[8px] font-bold uppercase px-1.5 py-0.5 rounded",
+                    "text-[9px] font-black uppercase px-2 py-0.5 rounded-md",
                     u.role === 'admin' ? "bg-purple-100 text-purple-700" :
                     u.role === 'dispatcher' ? "bg-orange-100 text-orange-700" :
                     u.role === 'preparer' ? "bg-blue-100 text-blue-700" :
                     u.role === 'driver' ? "bg-green-100 text-green-700" :
                     u.role === 'loader' ? "bg-amber-100 text-amber-700" :
                     u.role === 'store_sales' ? "bg-emerald-100 text-emerald-700" :
+                    u.role === 'karey_inventory' ? "bg-emerald-100 text-emerald-900 font-black" :
                     u.role === 'company' ? "bg-blue-50 text-blue-600" :
                     "bg-gray-100 text-gray-600"
                   )}>
@@ -81,7 +82,7 @@ export function AdminUsersView({ users, onBack, onRefresh }: { users: UserProfil
             <Button 
               variant="ghost" 
               onClick={() => setSelectedUser(u)}
-              className="p-2 hover:bg-gray-100 rounded-lg"
+              className="p-2 hover:bg-gray-100 rounded-lg shrink-0 ml-2"
             >
               <Settings className="w-4 h-4 text-gray-400" />
             </Button>

@@ -1,17 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Package, Search, Download, History, Plus, Settings, Edit, X, Minus, EyeOff, ChevronRight } from 'lucide-react';
+import { Package, Search, Download, History, Plus, Settings, Edit, X, Minus, EyeOff, ChevronRight, Factory } from 'lucide-react';
 import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import jsPDF from 'jspdf';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
-import { Product, UserProfile, ToastType } from '../../types';
-import { CATEGORIES, JABA_CONFIG } from '../../constants';
+import { Product, UserProfile, ToastType, Supplier } from '../../types';
+import { CATEGORIES, JABA_CONFIG, INITIAL_SUPPLIERS } from '../../constants';
 
 export function InventoryView({ 
   products, 
   profile, 
+  suppliers = INITIAL_SUPPLIERS,
   onBack,
   onEditProduct,
   onAddProduct,
@@ -25,10 +26,11 @@ export function InventoryView({
   setSelectedSubcategory: setExternalSelectedSubcategory,
   stockFilter: externalStockFilter,
   setStockFilter: setExternalStockFilter,
-  showToast: _showToast
+  showToast
 }: { 
   products: Product[], 
   profile: UserProfile | null, 
+  suppliers?: Supplier[],
   onBack: () => void,
   onEditProduct?: (product: Product) => void,
   onAddProduct?: () => void,
@@ -56,6 +58,15 @@ export function InventoryView({
   const [reason, setReason] = useState('');
   const [requestType, setRequestType] = useState<'update' | 'waste'>('update');
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'visible' | 'hidden'>('all');
+
+  // Supplier reception fields
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+  const [selectedSupplierName, setSelectedSupplierName] = useState<string>('');
+  const [invoiceDocNumber, setInvoiceDocNumber] = useState<string>('');
+
+  const availableSuppliers = useMemo(() => {
+    return suppliers && suppliers.length > 0 ? suppliers : INITIAL_SUPPLIERS;
+  }, [suppliers]);
 
   // Search and Filter State (Local fallback)
   const [internalSearchQuery, setInternalSearchQuery] = useState('');
@@ -265,13 +276,29 @@ export function InventoryView({
 
   const handleRequest = async () => {
     if (!selectedProduct || !profile) return;
+
+    const isStockIncrease = newStock > selectedProduct.stock;
+    const finalType = isStockIncrease ? 'update' : requestType;
+
+    if (finalType === 'update' && !selectedSupplierId) {
+      showToast?.('Debes seleccionar un Proveedor de Origen para registrar la entrada de mercancía', 'error');
+      return;
+    }
+
     try {
-      const finalType = newStock > selectedProduct.stock ? 'update' : requestType;
-      
+      const supObj = availableSuppliers.find(s => s.id === selectedSupplierId);
+      const supplierNameToSave = selectedSupplierName || supObj?.name || (selectedSupplierId ? 'Karey' : undefined);
+
       if (profile.role === 'admin' || profile.role === 'inventory') {
-        await updateDoc(doc(db, 'products', selectedProduct.id), {
+        const prodUpdate: Partial<Product> = {
           stock: newStock
-        });
+        };
+        if (selectedSupplierId && !selectedProduct.supplierId) {
+          prodUpdate.supplierId = selectedSupplierId;
+          prodUpdate.supplierName = supplierNameToSave;
+        }
+
+        await updateDoc(doc(db, 'products', selectedProduct.id), prodUpdate);
         
         await addDoc(collection(db, 'inventoryRequests'), {
           productId: selectedProduct.id || '',
@@ -279,12 +306,16 @@ export function InventoryView({
           type: finalType || 'update',
           oldValue: selectedProduct.stock || 0,
           newValue: newStock || 0,
-          reason: reason || (profile.role === 'admin' ? 'Actualización directa por administrador' : 'Actualización directa por encargado de inventario'),
+          supplierId: selectedSupplierId || null,
+          supplierName: supplierNameToSave || null,
+          invoiceOrDocNumber: invoiceDocNumber.trim() || null,
+          reason: reason || (profile.role === 'admin' ? `Entrada/Ajuste por Admin (Proveedor: ${supplierNameToSave || 'N/A'})` : `Entrada/Ajuste por Inventario (Proveedor: ${supplierNameToSave || 'N/A'})`),
           status: 'approved',
           requestedBy: profile.uid || 'unknown',
           requestedByName: profile.name || 'Admin',
           createdAt: serverTimestamp()
         });
+        showToast?.('Inventario y entrada de mercancía registrados', 'success');
       } else {
         await addDoc(collection(db, 'inventoryRequests'), {
           productId: selectedProduct.id || '',
@@ -292,17 +323,22 @@ export function InventoryView({
           type: finalType || 'update',
           oldValue: selectedProduct.stock || 0,
           newValue: newStock || 0,
+          supplierId: selectedSupplierId || null,
+          supplierName: supplierNameToSave || null,
+          invoiceOrDocNumber: invoiceDocNumber.trim() || null,
           reason: reason || '',
           status: 'pending',
           requestedBy: profile.uid || 'unknown',
           requestedByName: profile.name || 'Usuario',
           createdAt: serverTimestamp()
         });
+        showToast?.('Solicitud de entrada enviada para aprobación', 'info');
       }
       
       setIsRequestModalOpen(false);
       setSelectedProduct(null);
       setReason('');
+      setInvoiceDocNumber('');
     } catch (error) {
       const op = profile.role === 'admin' ? OperationType.UPDATE : OperationType.CREATE;
       const path = profile.role === 'admin' ? `products/${selectedProduct.id}` : 'inventoryRequests';
@@ -536,6 +572,15 @@ export function InventoryView({
                     setManualBaseStock(product.stock);
                     setEntryMode('normal');
                     setRequestType('update');
+                    setReason('');
+                    setInvoiceDocNumber('');
+
+                    // Preselect supplier
+                    const targetSupId = product.supplierId || (product.category === 'Quesos' ? (product.name.toLowerCase().includes('santa rita') ? 'sup_santa_rita' : (product.name.toLowerCase().includes('superior') || product.name.toLowerCase().includes('pomas') ? 'sup_superior' : 'sup_karey')) : 'sup_karey');
+                    const matchSup = availableSuppliers.find(s => s.id === targetSupId) || availableSuppliers.find(s => s.isDefault) || availableSuppliers[0];
+                    setSelectedSupplierId(matchSup?.id || 'sup_karey');
+                    setSelectedSupplierName(matchSup?.name || 'Karey');
+                    
                     setIsRequestModalOpen(true);
                   }}
                 >
@@ -554,38 +599,81 @@ export function InventoryView({
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-3xl p-6 w-full max-w-md space-y-6 max-h-[90vh] overflow-y-auto"
+              className="bg-white rounded-3xl p-6 w-full max-w-md space-y-5 max-h-[90vh] overflow-y-auto"
             >
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-bold">{profile.role === 'admin' ? 'Actualizar Inventario' : 'Solicitar Modificación'}</h3>
+                <h3 className="text-lg font-bold">{profile.role === 'admin' ? 'Actualizar Inventario / Recepción' : 'Solicitar Entrada / Modificación'}</h3>
                 <Button variant="ghost" onClick={() => setIsRequestModalOpen(false)} className="p-1">
                   <X className="w-6 h-6" />
                 </Button>
               </div>
 
               <div className="space-y-4">
-                <div>
-                  <label className="text-xs font-bold text-gray-400 uppercase">Producto</label>
-                  <p className="font-medium">{selectedProduct.name}</p>
+                <div className="bg-gray-50 p-3 rounded-2xl border border-gray-100 flex items-center justify-between">
+                  <div className="min-w-0 flex-1">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">Producto a Actualizar</label>
+                    <p className="font-bold text-gray-900 text-sm truncate">{selectedProduct.name}</p>
+                    <p className="text-[11px] text-gray-500">{selectedProduct.category} • Stock actual: <strong className="text-blue-900">{selectedProduct.stock} {selectedProduct.unit}</strong></p>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3">
                   <Button 
                     variant={requestType === 'update' ? 'primary' : 'outline'}
                     onClick={() => setRequestType('update')}
-                    className="text-xs"
+                    className="text-xs font-bold"
                   >
-                    Actualizar Stock
+                    Entrada / Actualizar
                   </Button>
                   <Button 
                     variant={requestType === 'waste' ? 'secondary' : 'outline'}
                     onClick={() => setRequestType('waste')}
-                    className="text-xs"
+                    className="text-xs font-bold"
                     disabled={newStock > selectedProduct.stock}
                   >
                     Reportar Merma
                   </Button>
                 </div>
+
+                {/* Mandatory Origin Supplier selection for stock entries & updates */}
+                {requestType === 'update' && (
+                  <div className="space-y-2 p-3.5 bg-teal-50/70 rounded-2xl border border-teal-200 shadow-xs">
+                    <label className="text-[10px] font-black text-teal-900 uppercase tracking-wider flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Factory className="w-3.5 h-3.5 text-teal-600" />
+                        Proveedor de Origen
+                      </span>
+                      <span className="text-red-600 font-bold lowercase text-[10px] bg-red-50 px-1.5 py-0.5 rounded border border-red-100">* obligatorio</span>
+                    </label>
+
+                    <select
+                      value={selectedSupplierId}
+                      onChange={(e) => {
+                        const sup = availableSuppliers.find(s => s.id === e.target.value);
+                        setSelectedSupplierId(e.target.value);
+                        setSelectedSupplierName(sup?.name || '');
+                      }}
+                      className="w-full px-3 py-2 bg-white border border-teal-300 rounded-xl text-xs font-bold text-gray-900 focus:ring-2 focus:ring-teal-500 focus:outline-none"
+                    >
+                      <option value="" disabled>-- Selecciona el Proveedor de Procedencia --</option>
+                      {availableSuppliers.map(sup => (
+                        <option key={sup.id} value={sup.id}>
+                          {sup.name} {sup.code ? `(${sup.code})` : ''} {sup.isDefault ? '• Predeterminado' : ''}
+                        </option>
+                      ))}
+                    </select>
+
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="Folio / Remisión / Factura (Opcional)"
+                        value={invoiceDocNumber}
+                        onChange={(e) => setInvoiceDocNumber(e.target.value)}
+                        className="w-full px-3 py-1.5 bg-white border border-teal-200 rounded-lg text-xs placeholder:text-gray-400 focus:ring-1 focus:ring-teal-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 {/* Entry Mode Selector */}
                 {(selectedProduct.piecesPerJaba || 

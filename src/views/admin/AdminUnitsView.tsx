@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronRight, Loader2, Plus, Check, X, Truck, Trash2, AlertTriangle, Wrench, RefreshCw } from 'lucide-react';
+import { ChevronRight, Loader2, Plus, Check, X, Truck, Trash2, AlertTriangle, Wrench, RefreshCw, Pencil } from 'lucide-react';
 import { collection, addDoc, doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Button, Input } from '../../components/ui';
@@ -121,7 +121,7 @@ export function AdminUnitsView({
   };
 
   return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6 pb-20 max-w-4xl mx-auto">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6 pb-20 w-full max-w-7xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -173,7 +173,7 @@ export function AdminUnitsView({
             <p className="text-xs text-gray-400">Registra un camión arriba para habilitar el control de jabas y asignaciones.</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {units.map((unit) => (
               <div
                 key={unit.id}
@@ -186,77 +186,97 @@ export function AdminUnitsView({
                     : "border-gray-100"
                 )}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl shrink-0">
                       <Truck className="w-5 h-5" />
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       {editingUnit?.id === unit.id ? (
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1.5">
                           <Input
                             value={editNumber}
                             onChange={(e) => setEditNumber(e.target.value)}
-                            className="h-8 text-sm w-32"
+                            className="h-8 text-sm w-36 font-bold"
+                            placeholder="Nº unidad"
                             autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleUpdateNumber(unit);
+                              if (e.key === 'Escape') setEditingUnit(null);
+                            }}
                           />
-                          <Button size="sm" variant="secondary" onClick={() => handleUpdateNumber(unit)} className="h-8 w-8 p-0">
-                            <Check className="w-4 h-4 text-emerald-600" />
+                          <Button 
+                            size="sm" 
+                            variant="secondary" 
+                            onClick={() => handleUpdateNumber(unit)} 
+                            className="h-8 w-8 p-0 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg shrink-0"
+                            title="Guardar cambio"
+                          >
+                            <Check className="w-4 h-4" />
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => setEditingUnit(null)} className="h-8 w-8 p-0">
-                            <X className="w-4 h-4 text-gray-400" />
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            onClick={() => setEditingUnit(null)} 
+                            className="h-8 w-8 p-0 text-gray-400 hover:bg-gray-100 rounded-lg shrink-0"
+                            title="Cancelar"
+                          >
+                            <X className="w-4 h-4" />
                           </Button>
                         </div>
                       ) : (
-                        <h4 className="text-base font-black text-gray-900">{unit.number}</h4>
+                        <h4 className="text-base font-black text-gray-900 tracking-tight">{unit.number}</h4>
                       )}
                       <div className="mt-1">{getStatusBadge(unit.status)}</div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
                     <Button
-                      variant="outline"
-                      size="sm"
+                      variant="ghost"
                       onClick={() => handleToggleMaintenance(unit)}
                       title={unit.status === 'maintenance' ? 'Reactivar unidad' : 'Enviar a mantenimiento'}
                       className={cn(
-                        "h-8 px-2.5 text-xs rounded-xl gap-1",
+                        "h-9 px-3 text-xs font-bold rounded-xl border gap-1.5 transition-all shadow-xs leading-none",
                         unit.status === 'maintenance'
-                          ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                          : "text-gray-600 hover:bg-gray-100"
+                          ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
+                          : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100 hover:text-amber-900"
                       )}
                     >
                       {unit.status === 'maintenance' ? (
                         <>
-                          <RefreshCw className="w-3.5 h-3.5" />
-                          Reactivar
+                          <RefreshCw className="w-3.5 h-3.5 shrink-0" />
+                          <span>Reactivar</span>
                         </>
                       ) : (
                         <>
-                          <Wrench className="w-3.5 h-3.5" />
-                          Mantenimiento
+                          <Wrench className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>Mantenimiento</span>
                         </>
                       )}
                     </Button>
+
                     <Button
-                      variant="outline"
-                      size="sm"
+                      variant="ghost"
                       onClick={() => {
                         setEditingUnit(unit);
                         setEditNumber(unit.number);
                       }}
-                      className="h-8 w-8 p-0 text-gray-500 rounded-xl"
+                      title="Editar número de unidad"
+                      className="h-9 px-3 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200 rounded-xl gap-1.5 transition-all shadow-xs leading-none"
                     >
-                      <span className="text-xs font-semibold">Edit</span>
+                      <Pencil className="w-3.5 h-3.5 shrink-0" />
+                      <span>Editar</span>
                     </Button>
+
                     <Button
-                      variant="outline"
-                      size="sm"
+                      variant="ghost"
                       onClick={() => setUnitToDelete(unit)}
-                      className="h-8 w-8 p-0 text-rose-500 hover:bg-rose-50 rounded-xl border-rose-100"
+                      title="Eliminar unidad"
+                      className="h-9 px-3 text-xs font-bold text-rose-600 bg-rose-50/60 border border-rose-200 hover:bg-rose-100 hover:border-rose-300 rounded-xl gap-1.5 transition-all shadow-xs leading-none"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                      <span>Eliminar</span>
                     </Button>
                   </div>
                 </div>

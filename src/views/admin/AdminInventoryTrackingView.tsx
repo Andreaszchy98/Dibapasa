@@ -1,18 +1,21 @@
 import { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { ChevronRight, Download, RotateCcw, Plus, Calendar, Search, Package, Trash2 } from 'lucide-react';
+import { ChevronRight, Download, RotateCcw, Plus, Calendar, Search, Package, Trash2, Factory, Building2, FileText } from 'lucide-react';
 import jsPDF from 'jspdf';
 import { Button } from '../../components/ui';
 import { cn } from '../../components/ui';
-import { Order, InventoryRequest, Product, UserProfile, ToastType } from '../../types';
-import { JABA_CONFIG } from '../../constants';
+import { Order, InventoryRequest, Product, UserProfile, ToastType, Supplier } from '../../types';
+import { JABA_CONFIG, INITIAL_SUPPLIERS } from '../../constants';
 import { InventoryView } from '../shared/InventoryView';
+import { AdminSuppliersView } from './AdminSuppliersView';
 
 export function AdminInventoryTrackingView({ 
   orders, 
   requests, 
   products, 
   profile, 
+  suppliers = INITIAL_SUPPLIERS,
+  initialTab = 'management',
   selectedDate, 
   onDateChange, 
   period = 'day', 
@@ -21,6 +24,8 @@ export function AdminInventoryTrackingView({
   onDeleteRequest, 
   onEditProduct, 
   onAddProduct, 
+  onSupplierSaved,
+  onSupplierDeleted,
   onRefresh, 
   inventorySearchQuery, 
   setInventorySearchQuery, 
@@ -36,6 +41,8 @@ export function AdminInventoryTrackingView({
   requests: InventoryRequest[]; 
   products: Product[]; 
   profile: UserProfile; 
+  suppliers?: Supplier[];
+  initialTab?: 'management' | 'sold' | 'waste' | 'entries' | 'suppliers';
   selectedDate: string; 
   onDateChange?: (date: string) => void; 
   period?: 'day' | 'week' | 'month' | 'year'; 
@@ -44,6 +51,8 @@ export function AdminInventoryTrackingView({
   onDeleteRequest: (id: string) => void; 
   onEditProduct?: (product: Product) => void; 
   onAddProduct?: () => void; 
+  onSupplierSaved?: (supplier: Supplier) => void;
+  onSupplierDeleted?: (id: string) => void;
   onRefresh?: () => void; 
   inventorySearchQuery?: string; 
   setInventorySearchQuery?: (q: string) => void; 
@@ -56,7 +65,7 @@ export function AdminInventoryTrackingView({
   showToast?: (msg: string, type?: ToastType) => void; 
 }) {
   const effectiveRole = profile.role === 'admin' ? (profile.viewAs || 'admin') : profile.role;
-  const [activeTab, setActiveTab] = useState<'management' | 'sold' | 'waste' | 'entries'>('management');
+  const [activeTab, setActiveTab] = useState<'management' | 'sold' | 'waste' | 'entries' | 'suppliers'>(initialTab);
   const [historySearch, setHistorySearch] = useState('');
 
   const generateJabaReport = () => {
@@ -329,12 +338,12 @@ export function AdminInventoryTrackingView({
         </div>
       </div>
 
-      <div className="flex bg-gray-100 p-1 rounded-2xl overflow-x-auto no-scrollbar">
+      <div className="flex bg-gray-100 p-1 rounded-2xl overflow-x-auto no-scrollbar gap-1">
         <button 
           onClick={() => { setActiveTab('management'); setHistorySearch(''); }}
           className={cn(
-            "flex-1 min-w-[80px] py-2 text-[10px] font-bold rounded-xl transition-all whitespace-nowrap",
-            activeTab === 'management' ? "bg-white text-[#0056b3] shadow-sm" : "text-gray-500"
+            "flex-1 min-w-[75px] py-2 text-[10px] font-bold rounded-xl transition-all whitespace-nowrap",
+            activeTab === 'management' ? "bg-white text-[#0056b3] shadow-sm" : "text-gray-500 hover:text-gray-700"
           )}
         >
           Gestión
@@ -342,8 +351,8 @@ export function AdminInventoryTrackingView({
         <button 
           onClick={() => { setActiveTab('sold'); setHistorySearch(''); }}
           className={cn(
-            "flex-1 min-w-[80px] py-2 text-[10px] font-bold rounded-xl transition-all whitespace-nowrap",
-            activeTab === 'sold' ? "bg-white text-[#0056b3] shadow-sm" : "text-gray-500"
+            "flex-1 min-w-[75px] py-2 text-[10px] font-bold rounded-xl transition-all whitespace-nowrap",
+            activeTab === 'sold' ? "bg-white text-[#0056b3] shadow-sm" : "text-gray-500 hover:text-gray-700"
           )}
         >
           Vendidos
@@ -351,8 +360,8 @@ export function AdminInventoryTrackingView({
         <button 
           onClick={() => { setActiveTab('waste'); setHistorySearch(''); }}
           className={cn(
-            "flex-1 min-w-[80px] py-2 text-[10px] font-bold rounded-xl transition-all whitespace-nowrap",
-            activeTab === 'waste' ? "bg-white text-red-600 shadow-sm" : "text-gray-500"
+            "flex-1 min-w-[75px] py-2 text-[10px] font-bold rounded-xl transition-all whitespace-nowrap",
+            activeTab === 'waste' ? "bg-white text-red-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
           )}
         >
           Mermas
@@ -360,15 +369,25 @@ export function AdminInventoryTrackingView({
         <button 
           onClick={() => { setActiveTab('entries'); setHistorySearch(''); }}
           className={cn(
-            "flex-1 min-w-[80px] py-2 text-[10px] font-bold rounded-xl transition-all whitespace-nowrap",
-            activeTab === 'entries' ? "bg-white text-green-600 shadow-sm" : "text-gray-500"
+            "flex-1 min-w-[75px] py-2 text-[10px] font-bold rounded-xl transition-all whitespace-nowrap",
+            activeTab === 'entries' ? "bg-white text-green-600 shadow-sm" : "text-gray-500 hover:text-gray-700"
           )}
         >
           Entradas
         </button>
+        <button 
+          onClick={() => { setActiveTab('suppliers'); setHistorySearch(''); }}
+          className={cn(
+            "flex-1 min-w-[85px] py-2 text-[10px] font-bold rounded-xl transition-all whitespace-nowrap flex items-center justify-center gap-1",
+            activeTab === 'suppliers' ? "bg-white text-teal-700 shadow-sm" : "text-gray-500 hover:text-gray-700"
+          )}
+        >
+          <Factory className="w-3 h-3" />
+          Proveedores
+        </button>
       </div>
 
-      {activeTab !== 'management' && (
+      {activeTab !== 'management' && activeTab !== 'suppliers' && (
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
@@ -386,6 +405,7 @@ export function AdminInventoryTrackingView({
           <InventoryView 
             products={products} 
             profile={profile} 
+            suppliers={suppliers}
             onBack={() => {}} 
             onEditProduct={onEditProduct}
             onAddProduct={onAddProduct}
@@ -399,6 +419,17 @@ export function AdminInventoryTrackingView({
             stockFilter={inventoryStockFilter}
             setStockFilter={setInventoryStockFilter}
             showToast={showToast}
+          />
+        )}
+
+        {activeTab === 'suppliers' && (
+          <AdminSuppliersView
+            suppliers={suppliers}
+            products={products}
+            onBack={() => setActiveTab('management')}
+            showToast={showToast}
+            onSupplierSaved={onSupplierSaved}
+            onSupplierDeleted={onSupplierDeleted}
           />
         )}
 
@@ -525,7 +556,28 @@ export function AdminInventoryTrackingView({
                         <p className="text-[10px] text-gray-400">{record.createdAt?.toDate().toLocaleString()}</p>
                       </div>
                     </div>
-                    <p className="text-xs text-gray-500 italic pl-1">"{record.reason}"</p>
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      {record.supplierName ? (
+                        <span className="inline-flex items-center gap-1 bg-teal-50 text-teal-800 text-[10px] font-bold px-2 py-0.5 rounded-md border border-teal-100">
+                          <Factory className="w-3 h-3 text-teal-600" />
+                          {record.supplierName}
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 bg-gray-50 text-gray-500 text-[10px] font-medium px-2 py-0.5 rounded-md">
+                          <Factory className="w-3 h-3 text-gray-400" />
+                          Karey (Origen base)
+                        </span>
+                      )}
+                      {record.invoiceOrDocNumber && (
+                        <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-md border border-blue-100">
+                          <FileText className="w-3 h-3 text-blue-500" />
+                          Doc: {record.invoiceOrDocNumber}
+                        </span>
+                      )}
+                    </div>
+                    {record.reason && (
+                      <p className="text-xs text-gray-500 italic pl-1">"{record.reason}"</p>
+                    )}
                     <p className="text-[10px] text-gray-400 pl-1">Registrado por: {record.requestedByName}</p>
                   </div>
                 );

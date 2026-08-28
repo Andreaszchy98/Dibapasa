@@ -53,19 +53,9 @@ export function getOrderContainerSummary(order: Order) {
   const jabaItems = order.items.filter(item => isJabaPackaging(item.packaging));
   const bagItems = order.items.filter(item => !item.packaging || item.packaging === 'bolsa');
   
-  // Determine JV count: if positive saved count, use it; else if green jaba items exist, count them
-  let jvCount = order.jvCount ?? 0;
-  if (jvCount <= 0 && greenJabaItems.length > 0) {
-    jvCount = Math.max(1, greenJabaItems.length);
-  }
-
-  // Determine JN count: if positive saved count, use it; else if black jaba items exist, count them
-  let jnCount = order.jnCount ?? 0;
-  if (jnCount <= 0 && blackJabaItems.length > 0) {
-    jnCount = Math.max(1, blackJabaItems.length);
-  }
-
-  const hasJaba = jvCount > 0 || jnCount > 0 || jabaItems.length > 0 || !!order.hasJaba;
+  const jvCount = order.jvCount ?? 0;
+  const jnCount = order.jnCount ?? 0;
+  const hasJaba = jvCount > 0 || jnCount > 0;
 
   return {
     hasJaba,

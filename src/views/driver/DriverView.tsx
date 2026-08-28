@@ -7,7 +7,7 @@ import { OSMMap } from '../../components/OSMMap';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Order, DeliveryRoute, UserProfile, Product, Unit } from '../../types';
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
-import { getOrderContainerSummary } from '../../lib/containers';
+import { getOrderContainerSummary, calculateItemEstimatedJabas, calculateOrderEstimatedJabas } from '../../lib/containers';
 
 export function DriverView({ 
   orders, 
@@ -605,19 +605,28 @@ export function DriverView({
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <p className="text-xs font-bold text-gray-900 truncate">{item.name}</p>
-                              {item.packaging === 'jaba_negra' ? (
-                                <span className="text-[9px] bg-gray-900 text-white font-bold px-1.5 py-0.2 rounded border border-gray-800">
-                                  ⚫ Jaba Negra (JN)
-                                </span>
-                              ) : (item.packaging === 'jaba_verde' || item.packaging === 'jaba') ? (
-                                <span className="text-[9px] bg-emerald-100 text-emerald-900 font-bold px-1.5 py-0.2 rounded border border-emerald-300">
-                                  🟢 Jaba Verde (JV)
-                                </span>
-                              ) : (
-                                <span className="text-[9px] bg-gray-100 text-gray-600 font-medium px-1.5 py-0.2 rounded">
-                                  🛍️ Bolsa
-                                </span>
-                              )}
+                              {(() => {
+                                const itemEst = calculateItemEstimatedJabas(item);
+                                if (item.packaging === 'jaba_negra' || (item.packaging !== 'bolsa' && itemEst.isJaba && itemEst.type === 'jn')) {
+                                  return (
+                                    <span className="text-[9px] bg-gray-900 text-white font-bold px-1.5 py-0.2 rounded border border-gray-800 flex items-center gap-0.5">
+                                      ⚫ Jaba Negra (JN)
+                                    </span>
+                                  );
+                                }
+                                if (item.packaging === 'jaba_verde' || item.packaging === 'jaba' || (item.packaging !== 'bolsa' && itemEst.isJaba && itemEst.type === 'jv')) {
+                                  return (
+                                    <span className="text-[9px] bg-emerald-100 text-emerald-900 font-bold px-1.5 py-0.2 rounded border border-emerald-300 flex items-center gap-0.5">
+                                      🟢 Jaba Verde (JV)
+                                    </span>
+                                  );
+                                }
+                                return (
+                                  <span className="text-[9px] bg-gray-100 text-gray-600 font-medium px-1.5 py-0.2 rounded">
+                                    🛍️ Bolsa
+                                  </span>
+                                );
+                              })()}
                             </div>
                             <div className="flex flex-col">
                               {item.unit === 'Kg' ? (

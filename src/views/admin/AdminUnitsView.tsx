@@ -1,6 +1,22 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronRight, Loader2, Plus, Check, X, Truck, Trash2, AlertTriangle, Wrench, RefreshCw, Pencil } from 'lucide-react';
+import { 
+  ChevronRight, 
+  Loader2, 
+  Plus, 
+  Check, 
+  X, 
+  Truck, 
+  Trash2, 
+  AlertTriangle, 
+  Wrench, 
+  RefreshCw, 
+  Pencil,
+  Search,
+  Filter,
+  List,
+  LayoutGrid
+} from 'lucide-react';
 import { collection, addDoc, doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Button, Input } from '../../components/ui';
@@ -25,6 +41,23 @@ export function AdminUnitsView({
   const [editNumber, setEditNumber] = useState('');
   const [unitToDelete, setUnitToDelete] = useState<Unit | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'in_route' | 'in_pantano' | 'maintenance'>('all');
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
+
+  const filteredUnits = useMemo(() => {
+    return units.filter(u => {
+      if (statusFilter !== 'all' && u.status !== statusFilter) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchNum = u.number.toLowerCase().includes(q);
+        const matchDriver = (u.lastDriverName || '').toLowerCase().includes(q);
+        const matchRoute = (u.lastRouteName || '').toLowerCase().includes(q);
+        if (!matchNum && !matchDriver && !matchRoute) return false;
+      }
+      return true;
+    });
+  }, [units, statusFilter, searchQuery]);
 
   const handleAddUnit = async () => {
     if (!newUnitNumber.trim()) return;
@@ -160,11 +193,69 @@ export function AdminUnitsView({
         </div>
       </div>
 
-      {/* Units List */}
-      <div className="space-y-3">
-        <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider px-1">
-          Unidades Registradas ({units.length})
-        </h3>
+      {/* Units List Section */}
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider px-1">
+            Unidades Registradas ({units.length})
+          </h3>
+
+          {/* Search, Filter & View Mode */}
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+            <div className="relative flex-1 sm:w-56">
+              <Search className="w-3.5 h-3.5 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar unidad..."
+                className="pl-8 text-xs h-9 bg-white"
+              />
+            </div>
+
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as any)}
+              className="text-xs bg-white border border-gray-200 rounded-xl px-3 h-9 text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">Todos los estados</option>
+              <option value="available">🟢 Disponibles</option>
+              <option value="in_route">🔵 En Ruta</option>
+              <option value="in_pantano">🔴 En Pantano</option>
+              <option value="maintenance">⚪ Mantenimiento</option>
+            </select>
+
+            <div className="flex items-center gap-1 bg-white border border-gray-200 p-1 rounded-xl shrink-0">
+              <button
+                type="button"
+                onClick={() => setViewMode('list')}
+                className={cn(
+                  "p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors",
+                  viewMode === 'list'
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-500 hover:text-gray-800"
+                )}
+                title="Vista de lista"
+              >
+                <List className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Lista</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('grid')}
+                className={cn(
+                  "p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors",
+                  viewMode === 'grid'
+                    ? "bg-blue-600 text-white"
+                    : "text-gray-500 hover:text-gray-800"
+                )}
+                title="Vista en tarjetas"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Tarjetas</span>
+              </button>
+            </div>
+          </div>
+        </div>
 
         {units.length === 0 ? (
           <div className="bg-white p-8 rounded-3xl border border-dashed border-gray-200 text-center space-y-2">
@@ -172,9 +263,137 @@ export function AdminUnitsView({
             <p className="text-sm font-medium text-gray-500">No hay unidades registradas.</p>
             <p className="text-xs text-gray-400">Registra un camión arriba para habilitar el control de jabas y asignaciones.</p>
           </div>
+        ) : filteredUnits.length === 0 ? (
+          <div className="bg-white p-8 rounded-3xl border border-dashed border-gray-200 text-center space-y-2">
+            <Truck className="w-10 h-10 text-gray-300 mx-auto" />
+            <p className="text-sm font-medium text-gray-500">No se encontraron unidades con el filtro seleccionado.</p>
+          </div>
+        ) : viewMode === 'list' ? (
+          /* List Mode */
+          <div className="bg-white rounded-3xl border border-gray-200 overflow-hidden divide-y divide-gray-100 shadow-sm">
+            {filteredUnits.map((unit) => (
+              <div
+                key={unit.id}
+                className={cn(
+                  "p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 transition-colors hover:bg-gray-50/80",
+                  unit.status === 'in_pantano' ? "bg-rose-50/25" : ""
+                )}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="p-2.5 bg-blue-50 text-blue-600 rounded-xl shrink-0">
+                    <Truck className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    {editingUnit?.id === unit.id ? (
+                      <div className="flex items-center gap-1.5">
+                        <Input
+                          value={editNumber}
+                          onChange={(e) => setEditNumber(e.target.value)}
+                          className="h-8 text-sm w-36 font-bold"
+                          placeholder="Nº unidad"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleUpdateNumber(unit);
+                            if (e.key === 'Escape') setEditingUnit(null);
+                          }}
+                        />
+                        <Button 
+                          size="sm" 
+                          variant="secondary" 
+                          onClick={() => handleUpdateNumber(unit)} 
+                          className="h-8 w-8 p-0 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg shrink-0"
+                          title="Guardar cambio"
+                        >
+                          <Check className="w-4 h-4" />
+                        </Button>
+                        <Button 
+                          size="sm" 
+                          variant="outline" 
+                          onClick={() => setEditingUnit(null)} 
+                          className="h-8 w-8 p-0 text-gray-400 hover:bg-gray-100 rounded-lg shrink-0"
+                          title="Cancelar"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-black text-sm text-gray-900">{unit.number}</span>
+                        {getStatusBadge(unit.status)}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-3 text-xs text-gray-500 mt-1 flex-wrap">
+                      <span>
+                        Chofer: <strong className="text-gray-700">{unit.lastDriverName || 'Sin asignar'}</strong>
+                      </span>
+                      <span>
+                        Jabas: <strong className="text-emerald-700 font-bold">{unit.jvPending || 0} JV</strong> · <strong className="text-gray-800 font-bold">{unit.jnPending || 0} JN</strong>
+                      </span>
+                      {unit.lastRouteName && (
+                        <span className="truncate max-w-[200px]">
+                          Ruta: <strong className="text-gray-700">{unit.lastRouteName}</strong>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-2 self-end md:self-center shrink-0">
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleToggleMaintenance(unit)}
+                    title={unit.status === 'maintenance' ? 'Reactivar unidad' : 'Enviar a mantenimiento'}
+                    className={cn(
+                      "h-8 px-2.5 text-xs font-bold rounded-xl border gap-1 transition-all shadow-2xs leading-none",
+                      unit.status === 'maintenance'
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
+                        : "bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100 hover:text-amber-900"
+                    )}
+                  >
+                    {unit.status === 'maintenance' ? (
+                      <>
+                        <RefreshCw className="w-3 h-3 shrink-0" />
+                        <span>Reactivar</span>
+                      </>
+                    ) : (
+                      <>
+                        <Wrench className="w-3 h-3 text-amber-600 shrink-0" />
+                        <span>Mantenimiento</span>
+                      </>
+                    )}
+                  </Button>
+
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setEditingUnit(unit);
+                      setEditNumber(unit.number);
+                    }}
+                    title="Editar número de unidad"
+                    className="h-8 px-2.5 text-xs font-bold text-slate-700 bg-slate-50 border border-slate-200 hover:text-blue-600 hover:bg-blue-50 hover:border-blue-200 rounded-xl gap-1 transition-all shadow-2xs leading-none"
+                  >
+                    <Pencil className="w-3 h-3 shrink-0" />
+                    <span>Editar</span>
+                  </Button>
+
+                  <Button
+                    variant="ghost"
+                    onClick={() => setUnitToDelete(unit)}
+                    title="Eliminar unidad"
+                    className="h-8 px-2.5 text-xs font-bold text-rose-600 bg-rose-50/60 border border-rose-200 hover:bg-rose-100 hover:border-rose-300 rounded-xl gap-1 transition-all shadow-2xs leading-none"
+                  >
+                    <Trash2 className="w-3 h-3 shrink-0" />
+                    <span>Eliminar</span>
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
+          /* Grid Cards Mode */
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {units.map((unit) => (
+            {filteredUnits.map((unit) => (
               <div
                 key={unit.id}
                 className={cn(

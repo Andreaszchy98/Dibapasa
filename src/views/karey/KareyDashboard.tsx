@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Truck, 
   Package, 
@@ -15,6 +15,11 @@ import {
   Clock, 
   ArrowRightLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  List,
+  LayoutGrid,
   Plus
 } from 'lucide-react';
 import { Button, Input, cn } from '../../components/ui';
@@ -39,6 +44,10 @@ export function KareyDashboard({
 }) {
   const [dateFilter, setDateFilter] = useState('');
   const [selectedDriverFilter, setSelectedDriverFilter] = useState('');
+  const [isFleetExpanded, setIsFleetExpanded] = useState(false);
+  const [fleetStatusFilter, setFleetStatusFilter] = useState<'all' | 'in_route' | 'in_pantano' | 'available' | 'maintenance'>('all');
+  const [fleetSearch, setFleetSearch] = useState('');
+  const [fleetViewMode, setFleetViewMode] = useState<'list' | 'grid'>('list');
   const containerCost = appSettings?.containerUnitCost || 150;
 
   // Key metrics calculation
@@ -117,6 +126,25 @@ export function KareyDashboard({
       return true;
     });
   }, [movements, dateFilter, selectedDriverFilter]);
+
+  // Filtered fleet units list
+  const filteredFleetUnits = useMemo(() => {
+    return units.filter((unit) => {
+      if (fleetStatusFilter !== 'all' && unit.status !== fleetStatusFilter) {
+        return false;
+      }
+      if (fleetSearch.trim()) {
+        const q = fleetSearch.toLowerCase();
+        const matchNumber = unit.number.toLowerCase().includes(q);
+        const matchDriver = (unit.lastDriverName || '').toLowerCase().includes(q);
+        const matchRoute = (unit.lastRouteName || '').toLowerCase().includes(q);
+        if (!matchNumber && !matchDriver && !matchRoute) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [units, fleetStatusFilter, fleetSearch]);
 
   const getStatusBadge = (status: Unit['status']) => {
     switch (status) {
@@ -434,73 +462,267 @@ export function KareyDashboard({
         )}
       </div>
 
-      {/* Units Fleet Status Section */}
-      <div className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-              <Truck className="w-5 h-5 text-emerald-600" />
-              Estado de la Flota ({units.length} Unidades)
-            </h3>
-            <p className="text-xs text-gray-400">Semáforo operativo de camiones y jabas pendientes</p>
+      {/* Units Fleet Status Section - Dropdown / Collapsible */}
+      <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden transition-all">
+        {/* Dropdown Header Bar */}
+        <button
+          type="button"
+          onClick={() => setIsFleetExpanded(prev => !prev)}
+          className="w-full p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left hover:bg-gray-50/50 transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl shrink-0">
+              <Truck className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-base font-bold text-gray-900">
+                  Estado de la Flota ({units.length} Unidades)
+                </h3>
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                  {isFleetExpanded ? 'Lista Desplegada' : 'Clic para desplegar lista'}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Semáforo operativo de camiones, choferes y conteo de jabas pendientes
+              </p>
+            </div>
           </div>
-        </div>
 
-        {units.length === 0 ? (
-          <div className="text-center py-8 text-gray-400 text-xs">
-            No hay unidades registradas en el sistema. El administrador debe agregarlas desde "Unidades / Camiones".
+          {/* Quick status summary chips & Chevron toggle */}
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap shrink-0">
+            <div className="flex items-center gap-1.5 text-xs font-semibold">
+              <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200">
+                {metrics.availableUnitsCount} Disp.
+              </span>
+              <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-lg border border-blue-200">
+                {metrics.activeUnitsCount} Ruta
+              </span>
+              {metrics.pantanoUnitsCount > 0 && (
+                <span className="px-2 py-0.5 bg-rose-50 text-rose-700 rounded-lg border border-rose-200 animate-pulse">
+                  {metrics.pantanoUnitsCount} Pantano
+                </span>
+              )}
+            </div>
+
+            <div className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center bg-gray-100 text-gray-600 transition-transform duration-200",
+              isFleetExpanded ? "rotate-180 bg-emerald-100 text-emerald-700" : ""
+            )}>
+              <ChevronDown className="w-4 h-4" />
+            </div>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {units.map((unit) => (
-              <div
-                key={unit.id}
-                className={cn(
-                  "p-4 rounded-2xl border transition-all space-y-2.5",
-                  unit.status === 'in_pantano'
-                    ? "bg-rose-50/50 border-rose-300 ring-2 ring-rose-200"
-                    : unit.status === 'in_route'
-                    ? "bg-blue-50/30 border-blue-200"
-                    : unit.status === 'maintenance'
-                    ? "bg-gray-50 border-gray-200 opacity-75"
-                    : "bg-white border-gray-100 hover:border-gray-200"
-                )}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-black text-sm text-gray-900">{unit.number}</span>
-                  {getStatusBadge(unit.status)}
+        </button>
+
+        {/* Collapsible Dropdown Content */}
+        <AnimatePresence initial={false}>
+          {isFleetExpanded && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: 'easeInOut' }}
+              className="border-t border-gray-100"
+            >
+              <div className="p-5 sm:p-6 space-y-4 bg-gray-50/30">
+                {/* Controls Bar: Search, Status Filter & View Mode */}
+                <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+                  <div className="flex flex-1 flex-col sm:flex-row gap-2">
+                    {/* Search by unit / driver */}
+                    <div className="relative flex-1">
+                      <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <Input
+                        value={fleetSearch}
+                        onChange={(e) => setFleetSearch(e.target.value)}
+                        placeholder="Buscar por Nº de unidad, chofer o ruta..."
+                        className="pl-9 text-xs bg-white"
+                      />
+                    </div>
+
+                    {/* Status filter dropdown */}
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Filter className="w-3.5 h-3.5 text-gray-400 hidden sm:block" />
+                      <select
+                        value={fleetStatusFilter}
+                        onChange={(e) => setFleetStatusFilter(e.target.value as any)}
+                        className="text-xs bg-white border border-gray-200 rounded-xl px-3 py-2 text-gray-700 font-medium focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      >
+                        <option value="all">Todos los estados ({units.length})</option>
+                        <option value="available">🟢 Disponibles ({metrics.availableUnitsCount})</option>
+                        <option value="in_route">🔵 En Ruta ({metrics.activeUnitsCount})</option>
+                        <option value="in_pantano">🔴 En Pantano ({metrics.pantanoUnitsCount})</option>
+                        <option value="maintenance">⚪ En Mantenimiento ({metrics.maintenanceUnitsCount})</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* View Mode Toggle */}
+                  <div className="flex items-center gap-1 bg-white border border-gray-200 p-1 rounded-xl shrink-0 self-end sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setFleetViewMode('list')}
+                      className={cn(
+                        "p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors",
+                        fleetViewMode === 'list'
+                          ? "bg-emerald-600 text-white"
+                          : "text-gray-500 hover:text-gray-800"
+                      )}
+                      title="Vista en lista desplegable"
+                    >
+                      <List className="w-3.5 h-3.5" />
+                      <span>Lista</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFleetViewMode('grid')}
+                      className={cn(
+                        "p-1.5 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors",
+                        fleetViewMode === 'grid'
+                          ? "bg-emerald-600 text-white"
+                          : "text-gray-500 hover:text-gray-800"
+                      )}
+                      title="Vista en cuadrícula"
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" />
+                      <span>Cuadrícula</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between text-gray-500">
-                    <span>Jabas Verdes (JV):</span>
-                    <span className="font-bold text-emerald-700">{unit.jvPending || 0}</span>
+                {/* Fleet Units List / Grid */}
+                {units.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400 text-xs bg-white rounded-2xl border border-dashed border-gray-200">
+                    No hay unidades registradas en el sistema. El administrador debe agregarlas desde "Unidades / Camiones".
                   </div>
-                  <div className="flex justify-between text-gray-500">
-                    <span>Jabas Negras (JN):</span>
-                    <span className="font-bold text-gray-800">{unit.jnPending || 0}</span>
+                ) : filteredFleetUnits.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400 text-xs bg-white rounded-2xl border border-dashed border-gray-200">
+                    No se encontraron unidades con los filtros seleccionados.
                   </div>
-                  <div className="flex justify-between text-gray-500 pt-1 border-t border-gray-100">
-                    <span className="truncate">Chofer:</span>
-                    <span className="font-medium text-gray-700 truncate max-w-[120px]">
-                      {unit.lastDriverName || 'Ninguno'}
-                    </span>
-                  </div>
-                </div>
+                ) : fleetViewMode === 'list' ? (
+                  /* Compact Desplegable List View */
+                  <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden divide-y divide-gray-100 shadow-2xs">
+                    {filteredFleetUnits.map((unit) => (
+                      <div
+                        key={unit.id}
+                        className={cn(
+                          "p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors hover:bg-gray-50/80",
+                          unit.status === 'in_pantano' ? "bg-rose-50/30" : ""
+                        )}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={cn(
+                            "w-9 h-9 rounded-xl flex items-center justify-center text-xs font-black shrink-0",
+                            unit.status === 'in_pantano'
+                              ? "bg-rose-100 text-rose-800"
+                              : unit.status === 'in_route'
+                              ? "bg-blue-100 text-blue-800"
+                              : unit.status === 'available'
+                              ? "bg-emerald-100 text-emerald-800"
+                              : "bg-gray-100 text-gray-700"
+                          )}>
+                            <Truck className="w-4 h-4" />
+                          </div>
 
-                {unit.status === 'in_pantano' && (
-                  <Button
-                    size="sm"
-                    onClick={() => onNavigate('karey-return')}
-                    className="w-full bg-rose-600 hover:bg-rose-700 text-white text-[11px] h-7 rounded-xl mt-2"
-                  >
-                    Conciliar Vale Pendiente
-                  </Button>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-black text-sm text-gray-900">{unit.number}</span>
+                              {getStatusBadge(unit.status)}
+                            </div>
+                            <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5 flex-wrap">
+                              <span>
+                                Chofer: <strong className="text-gray-700">{unit.lastDriverName || 'Sin asignar'}</strong>
+                              </span>
+                              {unit.lastRouteName && (
+                                <span className="truncate max-w-[200px]">
+                                  Ruta: <strong className="text-gray-700">{unit.lastRouteName}</strong>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Jabas Pending Counter & Action */}
+                        <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-100">
+                          <div className="flex items-center gap-3 text-xs">
+                            <div className="flex items-center gap-1 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                              <span className="text-[10px] text-emerald-800 font-bold">JV:</span>
+                              <span className="font-extrabold text-emerald-700">{unit.jvPending || 0}</span>
+                            </div>
+                            <div className="flex items-center gap-1 bg-gray-100 px-2.5 py-1 rounded-lg border border-gray-200">
+                              <span className="text-[10px] text-gray-700 font-bold">JN:</span>
+                              <span className="font-extrabold text-gray-900">{unit.jnPending || 0}</span>
+                            </div>
+                          </div>
+
+                          {unit.status === 'in_pantano' && (
+                            <Button
+                              size="sm"
+                              onClick={() => onNavigate('karey-return')}
+                              className="bg-rose-600 hover:bg-rose-700 text-white text-[11px] h-7 px-3 rounded-lg font-bold shadow-xs shrink-0"
+                            >
+                              Conciliar Vale
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  /* Grid View */
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {filteredFleetUnits.map((unit) => (
+                      <div
+                        key={unit.id}
+                        className={cn(
+                          "p-4 rounded-2xl border transition-all space-y-2.5",
+                          unit.status === 'in_pantano'
+                            ? "bg-rose-50/50 border-rose-300 ring-2 ring-rose-200"
+                            : unit.status === 'in_route'
+                            ? "bg-blue-50/30 border-blue-200"
+                            : unit.status === 'maintenance'
+                            ? "bg-gray-50 border-gray-200 opacity-75"
+                            : "bg-white border-gray-100 hover:border-gray-200"
+                        )}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-black text-sm text-gray-900">{unit.number}</span>
+                          {getStatusBadge(unit.status)}
+                        </div>
+
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between text-gray-500">
+                            <span>Jabas Verdes (JV):</span>
+                            <span className="font-bold text-emerald-700">{unit.jvPending || 0}</span>
+                          </div>
+                          <div className="flex justify-between text-gray-500">
+                            <span>Jabas Negras (JN):</span>
+                            <span className="font-bold text-gray-800">{unit.jnPending || 0}</span>
+                          </div>
+                          <div className="flex justify-between text-gray-500 pt-1 border-t border-gray-100">
+                            <span className="truncate">Chofer:</span>
+                            <span className="font-medium text-gray-700 truncate max-w-[120px]">
+                              {unit.lastDriverName || 'Ninguno'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {unit.status === 'in_pantano' && (
+                          <Button
+                            size="sm"
+                            onClick={() => onNavigate('karey-return')}
+                            className="w-full bg-rose-600 hover:bg-rose-700 text-white text-[11px] h-7 rounded-xl mt-2"
+                          >
+                            Conciliar Vale Pendiente
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
-            ))}
-          </div>
-        )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Movements History Section */}

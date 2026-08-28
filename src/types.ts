@@ -104,6 +104,7 @@ export interface OrderItem {
   approxWeight?: number;
   preparerWeight?: number;
   loaderWeight?: number;
+  piecesPerJaba?: number;
   packaging?: 'bolsa' | 'jaba' | 'jaba_verde' | 'jaba_negra';
   comment?: string;
   notes?: string;

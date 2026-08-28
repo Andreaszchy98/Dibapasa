@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { DeliveryRoute, UserProfile, Unit, ContainerMovement, Order, OrderItem } from '../types';
+import { JABA_CONFIG } from '../constants';
 
 export interface SyncContainerMovementParams {
   route: DeliveryRoute;
@@ -45,17 +46,133 @@ export function isBlackJaba(pkg?: string): boolean {
 }
 
 /**
- * Helper to analyze packaging for an order
+ * Smart estimator for individual item container requirements based on JABA_CONFIG or packaging
+ */
+export function calculateItemEstimatedJabas(item: OrderItem): {
+  isJaba: boolean;
+  count: number;
+  type: 'jv' | 'jn';
+  matchedConfig?: { perJaba: number; unit: 'Pza' | 'Kg' };
+} {
+  const isNegra = item.packaging === 'jaba_negra';
+  const isExplicitJaba = isJabaPackaging(item.packaging);
+  
+  // Look up item in JABA_CONFIG
+  const itemNameLower = (item.name || '').toLowerCase();
+  const configKey = Object.keys(JABA_CONFIG).find(k => itemNameLower.includes(k.toLowerCase()));
+  const config = configKey ? JABA_CONFIG[configKey] : null;
+
+  if (config) {
+    let count = 0;
+    if (config.unit === 'Kg') {
+      const weight = item.loaderWeight || item.preparerWeight || (item.approxWeight ? item.approxWeight * item.quantity : item.quantity);
+      count = Math.max(1, Math.ceil(weight / config.perJaba));
+    } else {
+      count = Math.max(1, Math.ceil(item.quantity / config.perJaba));
+    }
+    return {
+      isJaba: true,
+      count,
+      type: isNegra ? 'jn' : 'jv',
+      matchedConfig: config
+    };
+  }
+
+  if (item.piecesPerJaba && item.piecesPerJaba > 0) {
+    const count = Math.max(1, Math.ceil(item.quantity / item.piecesPerJaba));
+    return {
+      isJaba: true,
+      count,
+      type: isNegra ? 'jn' : 'jv'
+    };
+  }
+
+  if (isExplicitJaba) {
+    const defaultCapacity = item.unit === 'Kg' ? 20 : 15;
+    const qtyOrWeight = item.unit === 'Kg'
+      ? (item.loaderWeight || item.preparerWeight || (item.approxWeight ? item.approxWeight * item.quantity : item.quantity))
+      : item.quantity;
+    const count = Math.max(1, Math.ceil(qtyOrWeight / defaultCapacity));
+    return {
+      isJaba: true,
+      count,
+      type: isNegra ? 'jn' : 'jv'
+    };
+  }
+
+  return {
+    isJaba: false,
+    count: 0,
+    type: 'jv'
+  };
+}
+
+/**
+ * Calculates the total estimated/predicted Green (JV) and Black (JN) jabas for an order's items
+ */
+export function calculateOrderEstimatedJabas(items: OrderItem[]): {
+  estimatedJv: number;
+  estimatedJn: number;
+  totalJabas: number;
+  hasJaba: boolean;
+} {
+  let estimatedJv = 0;
+  let estimatedJn = 0;
+  let hasJaba = false;
+
+  for (const item of items) {
+    const res = calculateItemEstimatedJabas(item);
+    if (res.isJaba && res.count > 0) {
+      hasJaba = true;
+      if (res.type === 'jn') {
+        estimatedJn += res.count;
+      } else {
+        estimatedJv += res.count;
+      }
+    }
+  }
+
+  return {
+    estimatedJv,
+    estimatedJn,
+    totalJabas: estimatedJv + estimatedJn,
+    hasJaba
+  };
+}
+
+/**
+ * Helper to analyze packaging and container count for an order,
+ * respecting stored manual counts while recovering estimated counts if unset.
  */
 export function getOrderContainerSummary(order: Order) {
   const greenJabaItems = order.items.filter(item => isGreenJaba(item.packaging));
   const blackJabaItems = order.items.filter(item => isBlackJaba(item.packaging));
-  const jabaItems = order.items.filter(item => isJabaPackaging(item.packaging));
+  const jabaItems = order.items.filter(item => isJabaPackaging(item.packaging) || calculateItemEstimatedJabas(item).isJaba);
   const bagItems = order.items.filter(item => !item.packaging || item.packaging === 'bolsa');
   
-  const jvCount = order.jvCount ?? 0;
-  const jnCount = order.jnCount ?? 0;
-  const hasJaba = jvCount > 0 || jnCount > 0;
+  const estimated = calculateOrderEstimatedJabas(order.items);
+
+  // Stored counts
+  const hasStoredJv = typeof order.jvCount === 'number' && !isNaN(order.jvCount);
+  const hasStoredJn = typeof order.jnCount === 'number' && !isNaN(order.jnCount);
+  
+  let jvCount = 0;
+  let jnCount = 0;
+
+  if (hasStoredJv || hasStoredJn) {
+    jvCount = Math.max(0, order.jvCount || 0);
+    jnCount = Math.max(0, order.jnCount || 0);
+    // If stored as 0/0 but items are configured as jabas and order was not explicitly declared as no-jabas
+    if (jvCount === 0 && jnCount === 0 && (order.hasJaba || greenJabaItems.length > 0 || blackJabaItems.length > 0)) {
+      jvCount = estimated.estimatedJv;
+      jnCount = estimated.estimatedJn;
+    }
+  } else {
+    jvCount = estimated.estimatedJv;
+    jnCount = estimated.estimatedJn;
+  }
+
+  const hasJaba = jvCount > 0 || jnCount > 0 || order.hasJaba === true || jabaItems.length > 0;
 
   return {
     hasJaba,
@@ -68,6 +185,8 @@ export function getOrderContainerSummary(order: Order) {
     blackItemCount: blackJabaItems.length,
     jvCount: Math.max(0, jvCount),
     jnCount: Math.max(0, jnCount),
+    totalJabas: Math.max(0, jvCount) + Math.max(0, jnCount),
+    isEstimated: !hasStoredJv && !hasStoredJn && estimated.totalJabas > 0,
     totalItems: order.items.length
   };
 }

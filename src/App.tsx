@@ -16,7 +16,7 @@ import { generateInvoicePDF } from './lib/invoice';
 import { fileToBase64, compressImage, compressImageToBlob, transformImageUrl, sortOrdersByWindowAndDistance } from './lib/utils';
 import { validateStockAvailability } from './lib/inventory';
 import { calculateOrderPricing } from './lib/orders';
-import { calculateRouteContainerTotals, syncRouteContainerMovement } from './lib/containers';
+import { calculateRouteContainerTotals, syncRouteContainerMovement, calculateOrderEstimatedJabas } from './lib/containers';
 
 // Modular Views
 import {
@@ -863,12 +863,11 @@ export default function App() {
 
     const isStoreSale = isStoreOrdering || profile.role === 'store_sales';
 
-    // Calculate initial container counts
-    const greenCount = orderItems.filter(it => it.packaging === 'jaba_verde' || it.packaging === 'jaba').length;
-    const blackCount = orderItems.filter(it => it.packaging === 'jaba_negra').length;
-    const orderJv = greenCount > 0 ? Math.max(1, greenCount) : 0;
-    const orderJn = blackCount > 0 ? Math.max(1, blackCount) : 0;
-    const orderHasJaba = orderJv > 0 || orderJn > 0;
+    // Calculate smart initial container counts based on JABA_CONFIG & packaging
+    const estContainers = calculateOrderEstimatedJabas(orderItems);
+    const orderJv = estContainers.estimatedJv;
+    const orderJn = estContainers.estimatedJn;
+    const orderHasJaba = estContainers.hasJaba || orderJv > 0 || orderJn > 0;
 
     // Find driver's active route if placing order from driver view
     const activeDriverRoute = isDriverOrdering 
@@ -1873,6 +1872,7 @@ export default function App() {
             <AdminUsersView 
               users={allUsers} 
               onBack={() => setCurrentPage('admin-dashboard')}
+              showToast={showToast}
               onRefresh={async () => {
                 await loadAuthenticatedData();
                 showToast('Usuarios actualizados', 'success');

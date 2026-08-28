@@ -8,13 +8,22 @@ import { Order, DeliveryRoute, Product, UserProfile, OrderItem, Unit, ContainerM
 import { sortOrdersByWindowAndDistance } from '../../lib/utils';
 import { calculateOrderStatusInventoryDelta } from '../../lib/inventory';
 import { calculateOrderPricing } from '../../lib/orders';
-import { syncRouteContainerMovement, calculateRouteContainerTotals, isJabaPackaging, isGreenJaba, isBlackJaba } from '../../lib/containers';
+import { 
+  syncRouteContainerMovement, 
+  calculateRouteContainerTotals, 
+  isJabaPackaging, 
+  isGreenJaba, 
+  isBlackJaba,
+  calculateOrderEstimatedJabas,
+  calculateItemEstimatedJabas,
+  getOrderContainerSummary
+} from '../../lib/containers';
 
 export function PreparerView({ 
   orders, 
-  routes,
+  routes, 
   products, 
-  profile,
+  profile, 
   units = [],
   users = [],
   movements = [],
@@ -99,7 +108,15 @@ export function PreparerView({
         pkg = 'jaba_verde';
         greenJabaCount++;
       } else {
-        pkg = 'bolsa';
+        // Check if product has an automatic container requirement from JABA_CONFIG
+        const itemEst = calculateItemEstimatedJabas(item);
+        if (itemEst.isJaba) {
+          pkg = itemEst.type === 'jn' ? 'jaba_negra' : 'jaba_verde';
+          if (itemEst.type === 'jn') blackJabaCount++;
+          else greenJabaCount++;
+        } else {
+          pkg = 'bolsa';
+        }
       }
       initialPkg[item.productId] = pkg;
       
@@ -119,9 +136,25 @@ export function PreparerView({
     setCheckedItems(initialChecks);
     setOrderNotes(order.notes || '');
 
-    // Accurate counts from order (manual count only)
-    const defaultJv = order.jvCount ?? 0;
-    const defaultJn = order.jnCount ?? 0;
+    // Smart automatic estimation & stored counts
+    const estimated = calculateOrderEstimatedJabas(order.items);
+    const hasStoredJv = typeof order.jvCount === 'number' && !isNaN(order.jvCount);
+    const hasStoredJn = typeof order.jnCount === 'number' && !isNaN(order.jnCount);
+    
+    let defaultJv = 0;
+    let defaultJn = 0;
+
+    if (hasStoredJv || hasStoredJn) {
+      defaultJv = Math.max(0, order.jvCount || 0);
+      defaultJn = Math.max(0, order.jnCount || 0);
+      if (defaultJv === 0 && defaultJn === 0 && (order.hasJaba || greenJabaCount > 0 || blackJabaCount > 0 || estimated.hasJaba)) {
+        defaultJv = estimated.estimatedJv;
+        defaultJn = estimated.estimatedJn;
+      }
+    } else {
+      defaultJv = estimated.estimatedJv;
+      defaultJn = estimated.estimatedJn;
+    }
 
     setJvCount(defaultJv);
     setJnCount(defaultJn);
@@ -133,16 +166,28 @@ export function PreparerView({
   };
 
   const setItemPackagingType = (productId: string, newPkg: 'bolsa' | 'jaba_verde' | 'jaba_negra') => {
-    setItemPackaging(prev => ({
-      ...prev,
-      [productId]: newPkg
-    }));
+    setItemPackaging(prev => {
+      const updated = {
+        ...prev,
+        [productId]: newPkg
+      };
+
+      // Auto-suggest container counts if currently zero
+      if (newPkg === 'jaba_verde' && jvCount === 0) {
+        setJvCount(1);
+      } else if (newPkg === 'jaba_negra' && jnCount === 0) {
+        setJnCount(1);
+      }
+
+      return updated;
+    });
   };
 
   // Check if any container count is entered or packaging is set
   const hasJabaInOrder = useMemo(() => {
-    return jvCount > 0 || jnCount > 0;
-  }, [jvCount, jnCount]);
+    const hasPkgJaba = Object.values(itemPackaging).some(p => p === 'jaba_verde' || p === 'jaba_negra' || p === 'jaba');
+    return hasPkgJaba || jvCount > 0 || jnCount > 0;
+  }, [itemPackaging, jvCount, jnCount]);
 
   // Recalculate preview total based on current weights
   const previewPricing = useMemo(() => {

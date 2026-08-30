@@ -822,7 +822,7 @@ export default function App() {
   const handleCheckout = async (
     address: string, 
     deliverySlot: string, 
-    paymentMethod: 'cash' | 'card', 
+    paymentMethod: 'cash' | 'card' | 'credit', 
     recipientName?: string, 
     type: 'delivery' | 'pickup' = 'delivery', 
     notes: string = '', 
@@ -916,6 +916,15 @@ export default function App() {
         : await addDoc(collection(db, 'orders'), newOrder);
         
       const finalOrder = { id: docRef.id, ...newOrder };
+
+      // If payment is on credit, update customer's credit balance
+      if (paymentMethod === 'credit' && profile?.uid && !isDriverOrdering && !isStoreSale) {
+        const currentBalance = profile.creditBalance || 0;
+        const newBalance = Number((currentBalance + pricing.total).toFixed(2));
+        await updateDoc(doc(db, 'users', profile.uid), {
+          creditBalance: newBalance
+        });
+      }
 
       // If driver placed on route, attach order to the route and sync the container movement
       if (isDriverOrdering && activeDriverRoute) {

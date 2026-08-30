@@ -93,6 +93,8 @@ export interface UserProfile {
   phone?: string;
   role: UserRole;
   viewAs?: UserRole;
+  creditLimit?: number; // capturado por el admin, 0 o ausente = sin crédito autorizado
+  creditBalance?: number; // se recalcula, no se captura a mano
 }
 
 export interface OrderItem {
@@ -130,7 +132,7 @@ export interface Order {
     lng: number;
   };
   paymentStatus: 'pending' | 'paid' | 'failed';
-  paymentMethod: 'cash' | 'card' | 'online' | 'card_on_delivery';
+  paymentMethod: 'cash' | 'card' | 'online' | 'card_on_delivery' | 'credit';
   deliverySlot?: string; // e.g., "2026-04-03 08:00-10:00"
   deliveryWindowStart?: string; // HH:mm format
   deliveryWindowEnd?: string; // HH:mm format

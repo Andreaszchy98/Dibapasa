@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { ChevronRight, Truck, Package, User as UserIcon, Phone, FileText, Loader2, CreditCard, CheckCircle2, ShieldCheck, Info, Calendar, AlertTriangle } from 'lucide-react';
+import { ChevronRight, Truck, Package, User as UserIcon, Phone, FileText, Loader2, CreditCard, CheckCircle2, ShieldCheck, Info, Calendar, AlertTriangle, Building2 } from 'lucide-react';
 import { Button, Input } from '../../components/ui';
 import { cn } from '../../components/ui';
 import { Product, UserProfile, Order, OrderItem } from '../../types';
@@ -18,7 +18,7 @@ export interface CheckoutPageProps {
   onConfirm: (
     address: string,
     deliverySlot: string,
-    paymentMethod: 'cash' | 'card',
+    paymentMethod: 'cash' | 'card' | 'credit',
     recipientName: string,
     orderType: 'delivery' | 'pickup',
     notes: string,
@@ -68,7 +68,7 @@ export function CheckoutPage({
     }
     return now.toISOString().split('T')[0];
   });
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card'>('cash');
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'credit'>('cash');
   const [isProcessing, setIsProcessing] = useState(false);
   const [notes, setNotes] = useState('');
   const [deliveryWindowStart, setDeliveryWindowStart] = useState('08:00');
@@ -77,6 +77,16 @@ export function CheckoutPage({
   const [deliveryDistance, setDeliveryDistance] = useState(0);
   const [isCalculatingDistance, setIsCalculatingDistance] = useState(false);
   const [step, setStep] = useState<'type' | 'address' | 'review' | 'delivery' | 'payment' | 'card-details'>(isStoreOrdering ? 'review' : 'type');
+
+  const creditLimit = profile?.creditLimit || 0;
+  const creditBalance = profile?.creditBalance || 0;
+  const availableCredit = creditLimit - creditBalance;
+  const orderFinalTotal = (total || 0) + (orderType === 'delivery' ? deliveryFee : 0);
+  const canPayWithCredit = 
+    profile?.role === 'company' && 
+    creditLimit > 0 && 
+    creditBalance < creditLimit && 
+    availableCredit >= orderFinalTotal;
 
   const [cardInfo, setCardInfo] = useState({
     number: '',
@@ -680,6 +690,7 @@ export function CheckoutPage({
           <h3 className="font-bold text-gray-900">Método de Pago</h3>
           <div className="space-y-3">
             <button 
+              type="button"
               onClick={() => setPaymentMethod('cash')}
               className={cn(
                 "w-full p-4 rounded-2xl border-2 flex items-center justify-between transition-all",
@@ -699,6 +710,7 @@ export function CheckoutPage({
             </button>
 
             <button 
+              type="button"
               onClick={() => setPaymentMethod('card')}
               className={cn(
                 "w-full p-4 rounded-2xl border-2 flex items-center justify-between transition-all",
@@ -716,6 +728,35 @@ export function CheckoutPage({
               </div>
               {paymentMethod === 'card' && <CheckCircle2 className="w-5 h-5 text-emerald-600" />}
             </button>
+
+            {canPayWithCredit && (
+              <button 
+                type="button"
+                onClick={() => setPaymentMethod('credit')}
+                className={cn(
+                  "w-full p-4 rounded-2xl border-2 flex items-center justify-between transition-all",
+                  paymentMethod === 'credit' ? "border-blue-900 bg-emerald-50" : "border-gray-100 bg-white"
+                )}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-sky-100 text-sky-700 rounded-lg">
+                    <Building2 className="w-5 h-5" />
+                  </div>
+                  <div className="text-left">
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold text-gray-900 text-sm">Pagar a Crédito</p>
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-sky-100 text-sky-800">
+                        Empresa
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-500">
+                      Línea autorizada: ${creditLimit.toLocaleString('es-MX', { minimumFractionDigits: 2 })} · Disponible: ${availableCredit.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                </div>
+                {paymentMethod === 'credit' && <CheckCircle2 className="w-5 h-5 text-emerald-600" />}
+              </button>
+            )}
           </div>
           <div className="flex gap-3">
             <Button variant="outline" onClick={() => orderType === 'pickup' ? setStep('review') : setStep('delivery')} className="flex-1">Atrás</Button>
@@ -723,7 +764,13 @@ export function CheckoutPage({
               <Button onClick={() => setStep('card-details')} className="flex-[2]">Datos de Tarjeta</Button>
             ) : (
               <Button onClick={handleConfirm} className="flex-[2]" disabled={isProcessing}>
-                {isProcessing ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : `Confirmar Pedido $${((total || 0) + deliveryFee).toFixed(2)}`}
+                {isProcessing ? (
+                  <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                ) : paymentMethod === 'credit' ? (
+                  `Confirmar a Crédito $${((total || 0) + (orderType === 'delivery' ? deliveryFee : 0)).toFixed(2)}`
+                ) : (
+                  `Confirmar Pedido $${((total || 0) + (orderType === 'delivery' ? deliveryFee : 0)).toFixed(2)}`
+                )}
               </Button>
             )}
           </div>

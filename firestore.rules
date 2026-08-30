@@ -61,14 +61,16 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['name', 'role']) &&
-             (data.keys().size() >= 2 && data.keys().size() <= 15) &&
+             (data.keys().size() >= 2 && data.keys().size() <= 20) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
              (!('email' in data) || isValidEmail(data.email)) &&
              data.role in ['client', 'company', 'admin', 'dispatcher', 'preparer', 'driver', 'loader', 'store_sales', 'inventory', 'karey_inventory'] &&
              (!('viewAs' in data) || data.viewAs in ['client', 'company', 'admin', 'dispatcher', 'preparer', 'driver', 'loader', 'store_sales', 'inventory', 'karey_inventory']) &&
              (!('phone' in data) || (data.phone is string && data.phone.size() <= 25)) &&
              (!('address' in data) || (data.address is string && data.address.size() <= 500)) &&
-             (!('location' in data) || (data.location.lat is number && data.location.lng is number));
+             (!('location' in data) || (data.location.lat is number && data.location.lng is number)) &&
+             (!('creditLimit' in data) || (data.creditLimit is number && data.creditLimit >= 0)) &&
+             (!('creditBalance' in data) || (data.creditBalance is number && data.creditBalance >= 0));
     }
 
     function isValidProduct(data) {
@@ -93,7 +95,7 @@ service cloud.firestore {
              data.total is number && data.total >= 0 &&
              data.status in ['pending', 'accepted', 'processing', 'ready', 'shipped', 'delivered', 'cancelled', 'completed'] &&
              data.paymentStatus in ['pending', 'paid', 'failed'] &&
-             data.paymentMethod in ['cash', 'card', 'card_on_delivery', 'online'] &&
+             data.paymentMethod in ['cash', 'card', 'card_on_delivery', 'online', 'credit'] &&
              data.type in ['delivery', 'pickup'] &&
              data.address is string && data.address.size() <= 1000 &&
              (!('returnedItems' in data) || data.returnedItems is list) &&
@@ -160,6 +162,10 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         (isOwner(userId) && 
          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'address', 'location', 'viewAs']) && 
+         isValidUser(incoming())) ||
+        (isOwner(userId) && 
+         incoming().diff(existing()).affectedKeys().hasOnly(['creditBalance']) && 
+         existing().role == 'company' &&
          isValidUser(incoming())) ||
         (isAdmin() && isValidUser(incoming()))
       );

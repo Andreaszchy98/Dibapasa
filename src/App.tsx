@@ -917,15 +917,6 @@ export default function App() {
         
       const finalOrder = { id: docRef.id, ...newOrder };
 
-      // If payment is on credit, update customer's credit balance
-      if (paymentMethod === 'credit' && profile?.uid && !isDriverOrdering && !isStoreSale) {
-        const currentBalance = profile.creditBalance || 0;
-        const newBalance = Number((currentBalance + pricing.total).toFixed(2));
-        await updateDoc(doc(db, 'users', profile.uid), {
-          creditBalance: newBalance
-        });
-      }
-
       // If driver placed on route, attach order to the route and sync the container movement
       if (isDriverOrdering && activeDriverRoute) {
         const updatedOrderIds = activeDriverRoute.orderIds.includes(docRef.id) 
@@ -1532,6 +1523,7 @@ export default function App() {
                     cart={cart} 
                     total={cartTotal} 
                     products={products}
+                    orders={orders}
                     onBack={() => {
                       if (isStoreOrdering) {
                         setIsStoreOrdering(false);
@@ -1880,6 +1872,7 @@ export default function App() {
           {currentPage === 'admin-users' && (
             <AdminUsersView 
               users={allUsers} 
+              orders={allOrders}
               onBack={() => setCurrentPage('admin-dashboard')}
               showToast={showToast}
               onRefresh={async () => {

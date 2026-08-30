@@ -94,7 +94,6 @@ export interface UserProfile {
   role: UserRole;
   viewAs?: UserRole;
   creditLimit?: number; // capturado por el admin, 0 o ausente = sin crédito autorizado
-  creditBalance?: number; // se recalcula, no se captura a mano
 }
 
 export interface OrderItem {

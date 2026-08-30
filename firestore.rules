@@ -69,8 +69,7 @@ service cloud.firestore {
              (!('phone' in data) || (data.phone is string && data.phone.size() <= 25)) &&
              (!('address' in data) || (data.address is string && data.address.size() <= 500)) &&
              (!('location' in data) || (data.location.lat is number && data.location.lng is number)) &&
-             (!('creditLimit' in data) || (data.creditLimit is number && data.creditLimit >= 0)) &&
-             (!('creditBalance' in data) || (data.creditBalance is number && data.creditBalance >= 0));
+             (!('creditLimit' in data) || (data.creditLimit is number && data.creditLimit >= 0));
     }
 
     function isValidProduct(data) {
@@ -162,10 +161,6 @@ service cloud.firestore {
       allow update: if isSignedIn() && (
         (isOwner(userId) && 
          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'address', 'location', 'viewAs']) && 
-         isValidUser(incoming())) ||
-        (isOwner(userId) && 
-         incoming().diff(existing()).affectedKeys().hasOnly(['creditBalance']) && 
-         existing().role == 'company' &&
          isValidUser(incoming())) ||
         (isAdmin() && isValidUser(incoming()))
       );

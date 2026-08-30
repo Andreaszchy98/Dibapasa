@@ -31,11 +31,12 @@ import {
   Sparkles,
   AlertTriangle
 } from 'lucide-react';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../../firebase';
 import { Button, Input } from '../../components/ui';
 import { cn } from '../../components/ui';
-import { UserProfile, UserRole, ToastType } from '../../types';
+import { UserProfile, UserRole, ToastType, Order } from '../../types';
+import { calculateClientCreditBalance } from '../../lib/orders';
 
 export const ROLE_CONFIG: Record<UserRole, {
   label: string;
@@ -164,12 +165,13 @@ const CLIENT_ROLES: UserRole[] = ['client', 'company'];
 
 interface AdminUsersViewProps {
   users: UserProfile[];
+  orders?: Order[];
   onBack: () => void;
   onRefresh?: () => void;
   showToast?: (msg: string, type?: ToastType) => void;
 }
 
-export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUsersViewProps) {
+export function AdminUsersView({ users, orders = [], onBack, onRefresh, showToast }: AdminUsersViewProps) {
   const [activeTab, setActiveTab] = useState<'employees' | 'clients' | 'credits' | 'all'>('employees');
   const [searchTerm, setSearchTerm] = useState('');
   const [employeeAreaFilter, setEmployeeAreaFilter] = useState<string>('all');
@@ -200,7 +202,7 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
 
       if (u.role === 'company') {
         comp.push(u);
-        const bal = u.creditBalance || 0;
+        const bal = calculateClientCreditBalance(u.uid, orders);
         const lim = u.creditLimit || 0;
         debtSum += bal;
         limitSum += lim;
@@ -209,7 +211,7 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
     });
 
     // Sort companies by debt descending by default
-    comp.sort((a, b) => (b.creditBalance || 0) - (a.creditBalance || 0));
+    comp.sort((a, b) => calculateClientCreditBalance(b.uid, orders) - calculateClientCreditBalance(a.uid, orders));
 
     return { 
       employees: emp, 
@@ -219,7 +221,7 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
       totalCreditLimit: limitSum, 
       debtorsCount: debtors 
     };
-  }, [users]);
+  }, [users, orders]);
 
   // Filtered list based on active tab and search
   const filteredUsers = useMemo(() => {
@@ -238,7 +240,7 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
     } else if (activeTab === 'credits') {
       list = companies;
       if (creditStatusFilter === 'debtors') {
-        list = list.filter(u => (u.creditBalance || 0) > 0);
+        list = list.filter(u => calculateClientCreditBalance(u.uid, orders) > 0);
       } else if (creditStatusFilter === 'with_limit') {
         list = list.filter(u => (u.creditLimit || 0) > 0);
       } else if (creditStatusFilter === 'without_limit') {
@@ -259,7 +261,7 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
     }
 
     return list;
-  }, [activeTab, employees, clients, companies, users, employeeAreaFilter, clientTypeFilter, creditStatusFilter, searchTerm]);
+  }, [activeTab, employees, clients, companies, users, orders, employeeAreaFilter, clientTypeFilter, creditStatusFilter, searchTerm]);
 
   const updateUserRole = async (uid: string, newRole: UserRole) => {
     setIsUpdating(true);
@@ -284,7 +286,8 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
     setCreditModalUser(user);
     setCreditModalTab(defaultTab);
     setNewLimitInput(String(user.creditLimit || 0));
-    setPaymentAmountInput(String(user.creditBalance || ''));
+    const bal = calculateClientCreditBalance(user.uid, orders);
+    setPaymentAmountInput(bal > 0 ? String(bal) : '');
   };
 
   const handleSaveCreditLimit = async () => {
@@ -318,25 +321,35 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
       return;
     }
 
-    const currentBalance = creditModalUser.creditBalance || 0;
-    const newBalance = Math.max(0, Number((currentBalance - monto).toFixed(2)));
+    // Pedidos a crédito pendientes de este cliente, del más antiguo al más reciente
+    const pendingCreditOrders = orders
+      .filter(o => o.userId === creditModalUser.uid && o.paymentMethod === 'credit' && o.paymentStatus === 'pending')
+      .sort((a, b) => (a.createdAt?.toMillis?.() || 0) - (b.createdAt?.toMillis?.() || 0));
+
+    let remaining = monto;
+    const batch = writeBatch(db);
+    for (const order of pendingCreditOrders) {
+      if (remaining <= 0) break;
+      const orderTotal = order.adjustedTotal ?? order.total;
+      if (orderTotal <= remaining) {
+        batch.update(doc(db, 'orders', order.id), { paymentStatus: 'paid', paidAt: serverTimestamp() });
+        remaining -= orderTotal;
+      }
+      // Nota: si el monto pagado no alcanza a cubrir el siguiente pedido completo,
+      // ese pedido se queda pendiente (no hay pagos parciales de un solo pedido, solo pedidos completos).
+    }
 
     setIsUpdating(true);
     try {
-      await updateDoc(doc(db, 'users', creditModalUser.uid), {
-        creditBalance: newBalance
-      });
+      await batch.commit();
       if (showToast) {
-        showToast(`Pago de $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2 })} registrado con éxito. Nuevo saldo deudor: $${newBalance.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`, 'success');
+        showToast(`Pago de $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2 })} aplicado a los pedidos más antiguos.`, 'success');
       }
-      setCreditModalUser(prev => prev ? { ...prev, creditBalance: newBalance } : null);
       setPaymentAmountInput('');
       if (onRefresh) onRefresh();
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${creditModalUser.uid}`);
-      if (showToast) {
-        showToast('Error al registrar el pago', 'error');
-      }
+      if (showToast) showToast('Error al registrar el pago', 'error');
     } finally {
       setIsUpdating(false);
     }
@@ -757,7 +770,7 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredUsers.map(u => {
               const limit = u.creditLimit || 0;
-              const balance = u.creditBalance || 0;
+              const balance = calculateClientCreditBalance(u.uid, orders);
               const available = Math.max(0, limit - balance);
               const usagePercent = limit > 0 ? Math.min(100, Math.round((balance / limit) * 100)) : 0;
               const hasDebt = balance > 0;
@@ -891,7 +904,7 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
             const isEmp = roleInfo.category === 'employee';
             const isCompany = u.role === 'company';
             const limit = u.creditLimit || 0;
-            const balance = u.creditBalance || 0;
+            const balance = calculateClientCreditBalance(u.uid, orders);
             const available = Math.max(0, limit - balance);
 
             return (
@@ -1047,219 +1060,229 @@ export function AdminUsersView({ users, onBack, onRefresh, showToast }: AdminUse
               </div>
 
               {/* Tarjeta de Estado Actual de la Cuenta */}
-              <div className="p-4 bg-slate-900 text-white rounded-2xl space-y-3 shadow-md">
-                <div className="flex justify-between items-center text-xs text-slate-300">
-                  <span className="font-bold uppercase tracking-wider">Estado de Cuenta</span>
-                  <span className="px-2 py-0.5 rounded-md bg-white/10 text-slate-200 text-[10px] font-black uppercase">
-                    Cliente Empresa
-                  </span>
-                </div>
+              {(() => {
+                const modalUserBalance = calculateClientCreditBalance(creditModalUser.uid, orders);
+                const modalUserLimit = creditModalUser.creditLimit || 0;
+                const modalUserAvailable = Math.max(0, modalUserLimit - modalUserBalance);
 
-                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-800">
-                  <div>
-                    <p className="text-[10px] text-slate-400 font-medium uppercase">Límite Autorizado</p>
-                    <p className="text-base font-black text-white mt-0.5">
-                      ${(creditModalUser.creditLimit || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-red-300 font-medium uppercase">Saldo Deudor</p>
-                    <p className="text-base font-black text-red-400 mt-0.5">
-                      ${(creditModalUser.creditBalance || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] text-emerald-300 font-medium uppercase">Disponible</p>
-                    <p className="text-base font-black text-emerald-400 mt-0.5">
-                      ${Math.max(0, (creditModalUser.creditLimit || 0) - (creditModalUser.creditBalance || 0)).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                    </p>
-                  </div>
-                </div>
-              </div>
+                return (
+                  <>
+                    <div className="p-4 bg-slate-900 text-white rounded-2xl space-y-3 shadow-md">
+                      <div className="flex justify-between items-center text-xs text-slate-300">
+                        <span className="font-bold uppercase tracking-wider">Estado de Cuenta</span>
+                        <span className="px-2 py-0.5 rounded-md bg-white/10 text-slate-200 text-[10px] font-black uppercase">
+                          Cliente Empresa
+                        </span>
+                      </div>
 
-              {/* Tabs de Acción: Registrar Pago vs Ajustar Límite */}
-              <div className="flex p-1 bg-gray-100 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreditModalTab('payment');
-                    setPaymentAmountInput(String(creditModalUser.creditBalance || ''));
-                  }}
-                  className={cn(
-                    "flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
-                    creditModalTab === 'payment' ? "bg-white text-gray-900 shadow-xs" : "text-gray-500 hover:text-gray-900"
-                  )}
-                >
-                  <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Abonar / Registrar Pago</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCreditModalTab('limit');
-                    setNewLimitInput(String(creditModalUser.creditLimit || 0));
-                  }}
-                  className={cn(
-                    "flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
-                    creditModalTab === 'limit' ? "bg-white text-gray-900 shadow-xs" : "text-gray-500 hover:text-gray-900"
-                  )}
-                >
-                  <Settings className="w-3.5 h-3.5 text-sky-600" />
-                  <span>Modificar Límite</span>
-                </button>
-              </div>
-
-              {/* Formulario según pestaña seleccionada */}
-              {creditModalTab === 'payment' ? (
-                <div className="space-y-4 pt-1">
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-700">
-                      Monto a Abonar / Liquidar ($ MXN)
-                    </label>
-                    <div className="relative">
-                      <DollarSign className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="0.00"
-                        value={paymentAmountInput}
-                        onChange={(e) => setPaymentAmountInput(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-black text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-colors"
-                      />
+                      <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-800">
+                        <div>
+                          <p className="text-[10px] text-slate-400 font-medium uppercase">Límite Autorizado</p>
+                          <p className="text-base font-black text-white mt-0.5">
+                            ${modalUserLimit.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-red-300 font-medium uppercase">Saldo Deudor</p>
+                          <p className="text-base font-black text-red-400 mt-0.5">
+                            ${modalUserBalance.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-emerald-300 font-medium uppercase">Disponible</p>
+                          <p className="text-base font-black text-emerald-400 mt-0.5">
+                            ${modalUserAvailable.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Botones de Monto Rápido */}
-                  {(creditModalUser.creditBalance || 0) > 0 && (
-                    <div className="flex flex-wrap gap-2">
+                    {/* Tabs de Acción: Registrar Pago vs Ajustar Límite */}
+                    <div className="flex p-1 bg-gray-100 rounded-xl">
                       <button
                         type="button"
-                        onClick={() => setPaymentAmountInput(String(creditModalUser.creditBalance || 0))}
-                        className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold transition-colors border border-emerald-200"
+                        onClick={() => {
+                          setCreditModalTab('payment');
+                          setPaymentAmountInput(modalUserBalance > 0 ? String(modalUserBalance) : '');
+                        }}
+                        className={cn(
+                          "flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
+                          creditModalTab === 'payment' ? "bg-white text-gray-900 shadow-xs" : "text-gray-500 hover:text-gray-900"
+                        )}
                       >
-                        Liquidar Total (${(creditModalUser.creditBalance || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })})
+                        <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Abonar / Registrar Pago</span>
                       </button>
-                      {(creditModalUser.creditBalance || 0) > 500 && (
-                        <button
-                          type="button"
-                          onClick={() => setPaymentAmountInput('500')}
-                          className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
-                        >
-                          $500.00
-                        </button>
-                      )}
-                      {(creditModalUser.creditBalance || 0) > 1000 && (
-                        <button
-                          type="button"
-                          onClick={() => setPaymentAmountInput('1000')}
-                          className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
-                        >
-                          $1,000.00
-                        </button>
-                      )}
-                      {(creditModalUser.creditBalance || 0) > 5000 && (
-                        <button
-                          type="button"
-                          onClick={() => setPaymentAmountInput('5000')}
-                          className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
-                        >
-                          $5,000.00
-                        </button>
-                      )}
-                    </div>
-                  )}
 
-                  {/* Previsualización del saldo restante */}
-                  {Number(paymentAmountInput) > 0 && (
-                    <div className="p-3 bg-emerald-50/70 rounded-xl border border-emerald-200 text-xs flex items-center justify-between">
-                      <span className="text-emerald-900 font-semibold">Nuevo saldo deudor tras el abono:</span>
-                      <span className="font-black text-emerald-950 text-sm">
-                        ${Math.max(0, (creditModalUser.creditBalance || 0) - Number(paymentAmountInput)).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2.5 pt-2">
-                    <Button 
-                      variant="outline" 
-                      onClick={() => setCreditModalUser(null)} 
-                      className="flex-1 h-11 text-xs font-bold rounded-xl"
-                    >
-                      Cancelar
-                    </Button>
-                    <Button 
-                      onClick={handleRegisterPayment} 
-                      disabled={isUpdating || !paymentAmountInput || Number(paymentAmountInput) <= 0}
-                      className="flex-[2] h-11 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200 shadow-md"
-                    >
-                      {isUpdating ? 'Registrando...' : 'Aplicar Abono / Pago'}
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4 pt-1">
-                  <div className="space-y-2">
-                    <label className="text-xs font-bold text-gray-700">
-                      Límite de Crédito Autorizado ($ MXN)
-                    </label>
-                    <div className="relative">
-                      <DollarSign className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="number"
-                        step="100"
-                        min="0"
-                        placeholder="0.00"
-                        value={newLimitInput}
-                        onChange={(e) => setNewLimitInput(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-black text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-600/20 focus:border-sky-600 transition-colors"
-                      />
-                    </div>
-                    <p className="text-[11px] text-gray-500">
-                      0 o vacío = Sin crédito autorizado. Si se asigna un límite, el cliente podrá seleccionar "Pagar a crédito" en el checkout hasta alcanzar este tope.
-                    </p>
-                  </div>
-
-                  {/* Preajustes rápidos de límite */}
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setNewLimitInput('0')}
-                      className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-semibold transition-colors border border-red-200"
-                    >
-                      $0 (Sin crédito)
-                    </button>
-                    {['2000', '5000', '10000', '20000', '50000'].map(val => (
                       <button
-                        key={val}
                         type="button"
-                        onClick={() => setNewLimitInput(val)}
-                        className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
+                        onClick={() => {
+                          setCreditModalTab('limit');
+                          setNewLimitInput(String(modalUserLimit));
+                        }}
+                        className={cn(
+                          "flex-1 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5",
+                          creditModalTab === 'limit' ? "bg-white text-gray-900 shadow-xs" : "text-gray-500 hover:text-gray-900"
+                        )}
                       >
-                        ${Number(val).toLocaleString('es-MX')}
+                        <Settings className="w-3.5 h-3.5 text-sky-600" />
+                        <span>Modificar Límite</span>
                       </button>
-                    ))}
-                  </div>
+                    </div>
 
-                  <div className="flex gap-2.5 pt-2">
-                    <Button 
-                      variant="outline" 
-                      onClick={() => setCreditModalUser(null)} 
-                      className="flex-1 h-11 text-xs font-bold rounded-xl"
-                    >
-                      Cancelar
-                    </Button>
-                    <Button 
-                      onClick={handleSaveCreditLimit} 
-                      disabled={isUpdating}
-                      className="flex-[2] h-11 text-xs font-bold rounded-xl bg-sky-700 hover:bg-sky-800 text-white shadow-sky-200 shadow-md"
-                    >
-                      {isUpdating ? 'Guardando...' : 'Guardar Límite Autorizado'}
-                    </Button>
-                  </div>
-                </div>
-              )}
+                    {/* Formulario según pestaña seleccionada */}
+                    {creditModalTab === 'payment' ? (
+                      <div className="space-y-4 pt-1">
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-gray-700">
+                            Monto a Abonar / Liquidar ($ MXN)
+                          </label>
+                          <div className="relative">
+                            <DollarSign className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="0.00"
+                              value={paymentAmountInput}
+                              onChange={(e) => setPaymentAmountInput(e.target.value)}
+                              className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-black text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-emerald-600/20 focus:border-emerald-600 transition-colors"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Botones de Monto Rápido */}
+                        {modalUserBalance > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setPaymentAmountInput(String(modalUserBalance))}
+                              className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold transition-colors border border-emerald-200"
+                            >
+                              Liquidar Total (${modalUserBalance.toLocaleString('es-MX', { minimumFractionDigits: 2 })})
+                            </button>
+                            {modalUserBalance > 500 && (
+                              <button
+                                type="button"
+                                onClick={() => setPaymentAmountInput('500')}
+                                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
+                              >
+                                $500.00
+                              </button>
+                            )}
+                            {modalUserBalance > 1000 && (
+                              <button
+                                type="button"
+                                onClick={() => setPaymentAmountInput('1000')}
+                                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
+                              >
+                                $1,000.00
+                              </button>
+                            )}
+                            {modalUserBalance > 5000 && (
+                              <button
+                                type="button"
+                                onClick={() => setPaymentAmountInput('5000')}
+                                className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
+                              >
+                                $5,000.00
+                              </button>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Previsualización del saldo restante */}
+                        {Number(paymentAmountInput) > 0 && (
+                          <div className="p-3 bg-emerald-50/70 rounded-xl border border-emerald-200 text-xs flex items-center justify-between">
+                            <span className="text-emerald-900 font-semibold">Nuevo saldo deudor tras el abono:</span>
+                            <span className="font-black text-emerald-950 text-sm">
+                              ${Math.max(0, modalUserBalance - Number(paymentAmountInput)).toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="flex gap-2.5 pt-2">
+                          <Button 
+                            variant="outline" 
+                            onClick={() => setCreditModalUser(null)} 
+                            className="flex-1 h-11 text-xs font-bold rounded-xl"
+                          >
+                            Cancelar
+                          </Button>
+                          <Button 
+                            onClick={handleRegisterPayment} 
+                            disabled={isUpdating || !paymentAmountInput || Number(paymentAmountInput) <= 0}
+                            className="flex-[2] h-11 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200 shadow-md"
+                          >
+                            {isUpdating ? 'Registrando...' : 'Aplicar Abono / Pago'}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4 pt-1">
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-gray-700">
+                            Límite de Crédito Autorizado ($ MXN)
+                          </label>
+                          <div className="relative">
+                            <DollarSign className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                            <input
+                              type="number"
+                              step="100"
+                              min="0"
+                              placeholder="0.00"
+                              value={newLimitInput}
+                              onChange={(e) => setNewLimitInput(e.target.value)}
+                              className="w-full pl-9 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm font-black text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-600/20 focus:border-sky-600 transition-colors"
+                            />
+                          </div>
+                          <p className="text-[11px] text-gray-500">
+                            0 o vacío = Sin crédito autorizado. Si se asigna un límite, el cliente podrá seleccionar "Pagar a crédito" en el checkout hasta alcanzar este tope.
+                          </p>
+                        </div>
+
+                        {/* Preajustes rápidos de límite */}
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setNewLimitInput('0')}
+                            className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-semibold transition-colors border border-red-200"
+                          >
+                            $0 (Sin crédito)
+                          </button>
+                          {['2000', '5000', '10000', '20000', '50000'].map(val => (
+                            <button
+                              key={val}
+                              type="button"
+                              onClick={() => setNewLimitInput(val)}
+                              className="px-2.5 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-semibold transition-colors"
+                            >
+                              ${Number(val).toLocaleString('es-MX')}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="flex gap-2.5 pt-2">
+                          <Button 
+                            variant="outline" 
+                            onClick={() => setCreditModalUser(null)} 
+                            className="flex-1 h-11 text-xs font-bold rounded-xl"
+                          >
+                            Cancelar
+                          </Button>
+                          <Button 
+                            onClick={handleSaveCreditLimit} 
+                            disabled={isUpdating}
+                            className="flex-[2] h-11 text-xs font-bold rounded-xl bg-sky-700 hover:bg-sky-800 text-white shadow-sky-200 shadow-md"
+                          >
+                            {isUpdating ? 'Guardando...' : 'Guardar Límite Autorizado'}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </motion.div>
           </div>
         )}

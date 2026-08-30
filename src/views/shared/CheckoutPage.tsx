@@ -7,13 +7,14 @@ import { Product, UserProfile, Order, OrderItem } from '../../types';
 import { INITIAL_PRODUCTS } from '../../constants';
 import { AddressPicker } from './AddressPicker';
 import { calculateRoadDistance } from '../../lib/utils';
-import { calculateOrderPricing } from '../../lib/orders';
+import { calculateOrderPricing, calculateClientCreditBalance } from '../../lib/orders';
 import { geocodeOSMAddress } from '../../lib/osm';
 
 export interface CheckoutPageProps {
   cart: Record<string, number>;
   total: number;
   products: Product[];
+  orders?: Order[];
   onBack: () => void;
   onConfirm: (
     address: string,
@@ -38,6 +39,7 @@ export function CheckoutPage({
   cart, 
   total, 
   products, 
+  orders = [],
   onBack, 
   onConfirm, 
   profile, 
@@ -79,7 +81,7 @@ export function CheckoutPage({
   const [step, setStep] = useState<'type' | 'address' | 'review' | 'delivery' | 'payment' | 'card-details'>(isStoreOrdering ? 'review' : 'type');
 
   const creditLimit = profile?.creditLimit || 0;
-  const creditBalance = profile?.creditBalance || 0;
+  const creditBalance = profile?.uid ? calculateClientCreditBalance(profile.uid, orders) : 0;
   const availableCredit = creditLimit - creditBalance;
   const orderFinalTotal = (total || 0) + (orderType === 'delivery' ? deliveryFee : 0);
   const canPayWithCredit = 

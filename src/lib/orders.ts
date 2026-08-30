@@ -1,4 +1,4 @@
-import { OrderItem } from '../types';
+import { Order, OrderItem } from '../types';
 
 export interface OrderPricingSummary {
   subtotal: number;
@@ -88,4 +88,13 @@ export function calculateWeightDiscrepancy(
     diffPercentage: Math.round(diffPercentage * 100) / 100,
     varianceGrams,
   };
+}
+
+/**
+ * Calculates a client's outstanding credit balance by summing their pending credit orders.
+ */
+export function calculateClientCreditBalance(clientUid: string, orders: Order[]): number {
+  return orders
+    .filter(o => o.userId === clientUid && o.paymentMethod === 'credit' && o.paymentStatus === 'pending')
+    .reduce((sum, o) => sum + (o.adjustedTotal ?? o.total), 0);
 }
